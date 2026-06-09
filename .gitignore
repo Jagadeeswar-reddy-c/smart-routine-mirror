@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.env
+CLAUDE.md
+./.claude/
+./CLAUDE.md
+
+# Runtime data — keep .env.example but not the real .env or live data
+backend/data.json
+backend/smart_assistant.db
+
+# OS
+.DS_Store
+Thumbs.db

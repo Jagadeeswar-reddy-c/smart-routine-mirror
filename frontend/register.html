@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Register — Smart Morning Assistant</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="auth-page">
+
+  <div class="auth-card">
+
+    <div class="auth-logo">
+      <span>☀</span>
+      <h1>Smart Morning Assistant</h1>
+    </div>
+
+    <h2>Create Account</h2>
+    <p class="auth-sub">Register to get your personalised morning briefing.</p>
+
+    <form id="register-form" onsubmit="handleRegister(event)">
+      <div class="form-group">
+        <label for="username">Username</label>
+        <input id="username" type="text" placeholder="jagat"
+               required autocomplete="username" />
+      </div>
+      <div class="form-group">
+        <label for="email">Email</label>
+        <input id="email" type="email" placeholder="you@example.com"
+               required autocomplete="email" />
+      </div>
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input id="password" type="password" placeholder="Min. 6 characters"
+               required minlength="6" autocomplete="new-password" />
+      </div>
+
+      <p id="error-msg" class="auth-error" style="display:none"></p>
+
+      <button type="submit" class="auth-btn" id="submit-btn">Create Account</button>
+    </form>
+
+    <p class="auth-footer">
+      Already have an account? <a href="/login.html">Sign in</a>
+    </p>
+
+  </div>
+
+  <script src="auth.js"></script>
+</body>
+</html>

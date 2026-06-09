@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard — Smart Morning Assistant</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <header>
+    <div class="header-inner">
+      <div class="header-title">
+        <span class="header-icon">☀</span>
+        <h1>Smart Morning Assistant</h1>
+      </div>
+      <div class="header-right">
+        <span id="clock"></span>
+        <!-- username is filled by dashboard.js on load -->
+        <span id="user-badge" class="user-badge"></span>
+        <button id="refresh-btn" onclick="refreshAll()">↻ Refresh</button>
+        <a href="/devices.html" class="nav-link">📟 Devices</a>
+        <button class="logout-btn" onclick="logout()">Logout</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="dashboard">
+
+    <!-- Weather card -->
+    <section class="card" id="weather-card">
+      <div class="card-header">
+        <span class="card-icon">🌤</span>
+        <h2>Weather</h2>
+      </div>
+      <div id="weather-body" class="card-body">
+        <p class="loading">Loading…</p>
+      </div>
+      <form class="card-form" onsubmit="updateLocation(event)">
+        <input id="location-input" type="text" placeholder="City name (e.g. Berlin)" required />
+        <button type="submit">Update</button>
+      </form>
+    </section>
+
+    <!-- Schedule card -->
+    <section class="card" id="schedule-card">
+      <div class="card-header">
+        <span class="card-icon">📅</span>
+        <h2>Today's Schedule</h2>
+      </div>
+      <div id="schedule-body" class="card-body">
+        <p class="loading">Loading…</p>
+      </div>
+      <form class="card-form" onsubmit="addScheduleItem(event)">
+        <input id="sched-time" type="time" required />
+        <input id="sched-task" type="text" placeholder="Task / Event" required />
+        <button type="submit">Add</button>
+      </form>
+    </section>
+
+    <!-- News card -->
+    <section class="card" id="news-card">
+      <div class="card-header">
+        <span class="card-icon">📰</span>
+        <h2>Latest News</h2>
+      </div>
+      <div id="news-body" class="card-body">
+        <p class="loading">Loading…</p>
+      </div>
+    </section>
+
+    <!-- Device API Key card -->
+    <section class="card" id="device-card">
+      <div class="card-header">
+        <span class="card-icon">📟</span>
+        <h2>ESP32 Device Key</h2>
+      </div>
+      <div id="device-body" class="card-body">
+        <p class="loading">Loading…</p>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    <span id="status">Last updated: —</span>
+  </footer>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>

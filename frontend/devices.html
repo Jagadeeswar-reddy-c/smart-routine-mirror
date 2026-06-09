@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Device Management — Smart Morning Assistant</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <header>
+    <div class="header-inner">
+      <div class="header-title">
+        <span class="header-icon">☀</span>
+        <h1>Smart Morning Assistant</h1>
+      </div>
+      <div class="header-right">
+        <span id="user-badge" class="user-badge"></span>
+        <a href="/dashboard.html" class="nav-link">← Dashboard</a>
+        <button class="logout-btn" onclick="logout()">Logout</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="devices-layout">
+
+    <!-- ── Left panel: device list + register form ── -->
+    <section class="card" id="devices-panel">
+      <div class="card-header">
+        <span class="card-icon">📟</span>
+        <h2>My Devices</h2>
+      </div>
+
+      <div id="devices-list" class="card-body">
+        <p class="loading">Loading…</p>
+      </div>
+
+      <form class="card-form stack-form" onsubmit="registerDevice(event)">
+        <p class="form-section-label">Register a new device</p>
+        <input id="reg-code" placeholder="Device code  (e.g. bathroom_001)" required />
+        <input id="reg-name" placeholder="Device name  (e.g. Bathroom Mirror)" required />
+        <button type="submit" class="full-btn">＋ Register Device</button>
+      </form>
+    </section>
+
+    <!-- ── Right panel: device detail (hidden until a device is selected) ── -->
+    <section class="card" id="detail-panel" style="display:none">
+
+      <!-- ESP32 configuration block -->
+      <div class="detail-section">
+        <div class="card-header" style="border-bottom:none; padding-bottom:0;">
+          <span class="card-icon">⚙️</span>
+          <h2 id="detail-title">Device Details</h2>
+        </div>
+
+        <p class="device-hint" style="margin-top:0.75rem;">
+          Paste these two values into your ESP32 sketch before flashing.
+        </p>
+
+        <div class="cfg-row">
+          <span class="cfg-label">DEVICE_ID</span>
+          <code class="cfg-value" id="detail-id">—</code>
+          <button class="copy-btn" onclick="copyText('detail-id')" title="Copy">📋</button>
+        </div>
+        <div class="cfg-row">
+          <span class="cfg-label">DEVICE_SECRET</span>
+          <code class="cfg-value" id="detail-secret">—</code>
+          <button class="copy-btn" onclick="copyText('detail-secret')" title="Copy">📋</button>
+        </div>
+      </div>
+
+      <!-- Members section -->
+      <div class="detail-section">
+        <h3>👥 Members</h3>
+        <div id="members-list"></div>
+
+        <!-- Add member form — hidden for non-owners (set in JS) -->
+        <form id="add-member-form" class="card-form" onsubmit="addMember(event)"
+              style="display:none">
+          <input id="member-email" type="email" placeholder="Email address of new member"
+                 required />
+          <button type="submit">Add</button>
+        </form>
+      </div>
+
+      <!-- Fingerprint mappings section -->
+      <div class="detail-section" style="border-bottom:none; margin-bottom:0; padding-bottom:0;">
+        <h3>🖐 Fingerprint Mappings</h3>
+        <p class="device-hint">
+          First enroll fingers on the ESP32 using <code>fingerprint_enroll.ino</code>,
+          then map each slot number to a user account here.
+        </p>
+        <div id="fingerprints-list"></div>
+
+        <form class="card-form stack-form" id="add-fp-form" onsubmit="addFingerprint(event)">
+          <select id="fp-user">
+            <option value="">— select user —</option>
+          </select>
+          <input id="fp-id" type="number" min="1" max="127"
+                 placeholder="Fingerprint slot ID (1–127)" required />
+          <input id="fp-label" placeholder="Label  (e.g. Right thumb)" />
+          <button type="submit" class="full-btn">＋ Add Mapping</button>
+        </form>
+      </div>
+
+    </section>
+
+  </main>
+
+  <footer><span id="status"></span></footer>
+
+  <script src="devices.js"></script>
+</body>
+</html>
