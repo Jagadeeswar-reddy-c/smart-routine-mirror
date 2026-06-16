@@ -69,6 +69,41 @@
       </div>
     </section>
 
+    <!-- Display Content card -->
+    <section class="card" id="display-card">
+      <div class="card-header">
+        <span class="card-icon">🖥</span>
+        <h2>Display Content</h2>
+      </div>
+      <div class="card-body">
+
+        <p class="device-hint">
+          These values are fetched by the ESP32 multidisplay over Wi-Fi.
+          Edit them here and the display updates on its next refresh (every 5 min).
+        </p>
+
+        <!-- Quotes -->
+        <div class="subsection-label">Motivational Quotes</div>
+        <div id="quotes-body" class="card-body" style="padding:0 0 8px 0;"></div>
+        <form class="card-form" onsubmit="addQuote(event)">
+          <input id="quote-text" type="text" maxlength="60"
+                 placeholder="Enter a quote (max 60 chars)" required />
+          <button type="submit">Add</button>
+        </form>
+
+        <!-- Water reminder interval -->
+        <div class="subsection-label" style="margin-top:16px;">Water Reminder</div>
+        <form class="card-form" onsubmit="saveDisplaySettings(event)">
+          <label style="color:var(--text-muted);font-size:.85rem;margin-right:6px;">Every</label>
+          <input id="water-interval" type="number" min="5" max="480" step="5"
+                 style="width:72px;" placeholder="60" />
+          <label style="color:var(--text-muted);font-size:.85rem;margin:0 8px 0 4px;">minutes</label>
+          <button type="submit">Save</button>
+        </form>
+
+      </div>
+    </section>
+
     <!-- Device API Key card -->
     <section class="card" id="device-card">
       <div class="card-header">

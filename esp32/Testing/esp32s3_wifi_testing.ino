@@ -6,8 +6,8 @@
 #include <esp_err.h>
 #include <stdlib.h>
 
-const char* ssid     = "Junior 2GHz";
-const char* password = "Pavani@3534";
+const char* ssid     = "Nokia";
+const char* password = "1234567890";
 
 const char* wifiDisconnectReasonText(uint8_t reason) {
   switch (reason) {
@@ -107,7 +107,7 @@ void setup() {
             foundTargetInScan = true;
             Serial.printf("LOW-LEVEL: Found target AP record:\n");
             Serial.printf("  ssid: %s\n", ap_records[i].ssid);
-            Serial.printf("  authmode (numeric): %d (%s)\n", ap_records[i].authmode, authModeToStr(ap_records[i].authmode));
+            Serial.printf("  authmode (numeric): %d\n", ap_records[i].authmode);
             Serial.printf("  primary channel: %d\n", ap_records[i].primary);
             Serial.printf("  rssi: %d dBm\n", ap_records[i].rssi);
             Serial.printf("  bssid: %02X:%02X:%02X:%02X:%02X:%02X\n",

@@ -57,6 +57,26 @@ class ScheduleItemOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# ── Quotes ────────────────────────────────────────────────────────────────────
+
+class QuoteIn(BaseModel):
+    text: str
+
+
+class QuoteOut(BaseModel):
+    id: int
+    text: str
+    sort_order: int
+
+    model_config = {"from_attributes": True}
+
+
+# ── Multidisplay settings ──────────────────────────────────────────────────────
+
+class MultidisplaySettingsIn(BaseModel):
+    water_interval_min: int = 60
+
+
 # ── Single-user device token (unchanged) ──────────────────────────────────────
 
 class DeviceTokenOut(BaseModel):

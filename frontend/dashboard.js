@@ -207,6 +207,81 @@ function esc(str) {
     .replace(/"/g, "&quot;");
 }
 
+// ── Quotes ────────────────────────────────────────────────────────────────────
+
+async function loadQuotes() {
+  try {
+    const resp = await apiCall(`${API_BASE}/api/quotes`);
+    if (!resp || !resp.ok) return;
+    renderQuotes(await resp.json());
+  } catch (err) { console.error("Quote load error:", err); }
+}
+
+function renderQuotes(quotes) {
+  const el = document.getElementById("quotes-body");
+  if (!quotes.length) {
+    el.innerHTML = `<p class="empty-msg">No quotes yet. Add one below.</p>`;
+    return;
+  }
+  el.innerHTML = `
+    <ul class="schedule-list">
+      ${quotes.map(q => `
+        <li class="schedule-item">
+          <span class="sched-task" id="q-text-${q.id}">${esc(q.text)}</span>
+          <button class="delete-btn" onclick="deleteQuote(${q.id})" title="Delete">✕</button>
+        </li>`).join("")}
+    </ul>`;
+}
+
+async function addQuote(event) {
+  event.preventDefault();
+  const text = document.getElementById("quote-text").value.trim();
+  if (!text) return;
+  try {
+    const resp = await apiCall(`${API_BASE}/api/quotes`, {
+      method: "POST", body: JSON.stringify({ text }),
+    });
+    if (!resp) return;
+    if (!resp.ok) { const e = await resp.json(); setStatus(`⚠ ${e.detail}`, true); return; }
+    document.getElementById("quote-text").value = "";
+    setStatus("Quote added!");
+    await loadQuotes();
+  } catch (err) { setStatus("⚠ Failed to add quote.", true); }
+}
+
+async function deleteQuote(id) {
+  try {
+    const resp = await apiCall(`${API_BASE}/api/quotes/${id}`, { method: "DELETE" });
+    if (!resp) return;
+    setStatus("Quote deleted.");
+    await loadQuotes();
+  } catch (err) { setStatus("⚠ Failed to delete quote.", true); }
+}
+
+// ── Multidisplay settings ──────────────────────────────────────────────────────
+
+async function loadDisplaySettings() {
+  try {
+    const resp = await apiCall(`${API_BASE}/api/multidisplay/settings`);
+    if (!resp || !resp.ok) return;
+    const s = await resp.json();
+    document.getElementById("water-interval").value = s.water_interval_min ?? 60;
+  } catch (err) { console.error("Settings load error:", err); }
+}
+
+async function saveDisplaySettings(event) {
+  event.preventDefault();
+  const water_interval_min = Number(document.getElementById("water-interval").value);
+  try {
+    const resp = await apiCall(`${API_BASE}/api/multidisplay/settings`, {
+      method: "POST", body: JSON.stringify({ water_interval_min }),
+    });
+    if (!resp) return;
+    if (!resp.ok) { const e = await resp.json(); setStatus(`⚠ ${e.detail}`, true); return; }
+    setStatus("Display settings saved!");
+  } catch (err) { setStatus("⚠ Failed to save settings.", true); }
+}
+
 // ── Device API Key ────────────────────────────────────────────────────────────
 
 async function loadDeviceToken() {
@@ -277,4 +352,6 @@ async function regenerateDeviceKey() {
 
 refreshAll();
 loadDeviceToken();
+loadQuotes();
+loadDisplaySettings();
 setInterval(refreshAll, 5 * 60 * 1000);   // auto-refresh every 5 minutes

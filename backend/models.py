@@ -37,6 +37,9 @@ class User(Base):
     device_token   = relationship("DeviceToken",   back_populates="user",
                                   uselist=False, cascade="all, delete-orphan")
 
+    quotes = relationship("UserQuote", back_populates="user",
+                          cascade="all, delete-orphan", order_by="UserQuote.sort_order")
+
     # ── New relationships (multi-user device extension) ──────────────────────
     devices_owned      = relationship(
         "Device", foreign_keys="Device.owner_user_id", back_populates="owner"
@@ -49,11 +52,12 @@ class User(Base):
 class UserSettings(Base):
     __tablename__ = "user_settings"
 
-    id               = Column(Integer, primary_key=True, index=True)
-    user_id          = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
-    weather_location = Column(String(100), default="Saarbrücken")
-    created_at       = Column(DateTime, default=datetime.utcnow)
-    updated_at       = Column(DateTime, default=datetime.utcnow)
+    id                 = Column(Integer, primary_key=True, index=True)
+    user_id            = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
+    weather_location   = Column(String(100), default="Saarbrücken")
+    water_interval_min = Column(Integer, default=60)   # multidisplay water-reminder cadence
+    created_at         = Column(DateTime, default=datetime.utcnow)
+    updated_at         = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="settings")
 
@@ -84,6 +88,21 @@ class DeviceToken(Base):
     last_used_at = Column(DateTime, nullable=True)
 
     user = relationship("User", back_populates="device_token")
+
+
+# ── Multidisplay quotes ────────────────────────────────────────────────────────
+
+class UserQuote(Base):
+    """Motivational quotes shown on the greeting OLED display."""
+    __tablename__ = "user_quotes"
+
+    id         = Column(Integer, primary_key=True, index=True)
+    user_id    = Column(Integer, ForeignKey("users.id"), nullable=False)
+    text       = Column(String(120), nullable=False)
+    sort_order = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="quotes")
 
 
 # ── New tables — multi-user device extension ───────────────────────────────────
