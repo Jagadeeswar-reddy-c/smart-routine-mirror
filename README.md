@@ -1,12 +1,12 @@
 # Smart Morning Assistant
 
-A university Interactive Systems prototype that delivers a personalised morning briefing — weather, schedule, and news — through a web dashboard and an ESP32-S3 smart mirror device, with per-user accounts and fingerprint-based identity on shared hardware.
+A university Interactive Systems prototype that delivers a personalised morning briefing — weather, schedule, and news — through a web dashboard and a XIAO ESP32-S3 smart mirror device, with per-user accounts and fingerprint-based identity on shared hardware.
 
 ---
 
 ## Project Idea
 
-The device sits beside a mirror or on a bedside table. Each morning a family member places their finger on the sensor; the ESP32 identifies them, calls the backend, and displays **their** weather, schedule, and news — all on one shared piece of hardware. A web dashboard lets each user manage their own data and register devices.
+The device sits beside a mirror or on a bedside table. Each morning a family member selects their profile and places their finger on the sensor; the ESP32 identifies them, calls the backend, and displays **their** weather, schedule, news, and personal quotes — all on four shared OLED screens. A web dashboard lets each user manage their own data and register devices.
 
 ---
 
@@ -21,7 +21,7 @@ The device sits beside a mirror or on a bedside table. Each morning a family mem
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    FastAPI Backend                          │
-│  auth_routes   ·   user data endpoints   ·  device_routes  │
+│  auth_routes  ·  user data endpoints  ·  device_routes     │
 │  SQLite (users, schedule, devices, fingerprints …)          │
 │       │                                        │            │
 │  Weather API                              News API          │
@@ -30,30 +30,34 @@ The device sits beside a mirror or on a bedside table. Each morning a family mem
                            │ HTTP POST + device_secret
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    ESP32-S3 Device                          │
+│               XIAO ESP32-S3 Smart Mirror                    │
 │                                                             │
-│  ┌──────────────┐   UART    ┌─────────────────────────┐    │
-│  │ Fingerprint  │◄─────────►│     ESP32-S3 MCU         │    │
-│  │ Sensor       │           │  Wi-Fi · JSON parser     │    │
-│  │ (R307/R503)  │           │  ArduinoJson             │    │
-│  └──────────────┘           └────────────┬────────────┘    │
-│                                          │ I2C/SPI         │
-│                                   ┌──────▼──────┐          │
-│                                   │ OLED / TFT  │(optional)│
-│                                   │   Display   │          │
-│                                   └─────────────┘          │
+│  ┌──────────────┐  UART1   ┌─────────────────────────┐     │
+│  │ Fingerprint  │◄────────►│     XIAO ESP32-S3        │     │
+│  │ Sensor       │ D6/D7    │  Wi-Fi · JSON · buttons  │     │
+│  │ (AS608/R307) │ GPIO43/44│  ArduinoJson             │     │
+│  └──────────────┘          └────────────┬────────────┘     │
+│                                         │ I2C (D4/D5)      │
+│                                  ┌──────▼──────┐           │
+│                                  │  TCA9548A   │           │
+│                                  │ multiplexer │           │
+│                                  └──────┬──────┘           │
+│                     ┌──────┬──────┬─────┴────┐             │
+│                 OLED 0  OLED 1  OLED 2  OLED 3             │
+│                Greeting Weather  News  Schedule             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 **Data flow at runtime:**
 
 ```
-Finger on sensor
-    → ESP32 matches fingerprint locally (slot ID 1–127)
+Profile selected on-screen (BTN_NEXT / BTN_DONE / BTN_SEL)
+    → Finger placed on sensor
+    → ESP32 matches fingerprint locally (slot ID 1–3)
     → POST /api/devices/{id}/login  { fingerprint_id, device_secret }
-    → Backend maps slot → user_id → fetches weather + schedule + news
+    → Backend maps slot → user_id → fetches weather + schedule + news + quotes
     → Returns personalised JSON
-    → ESP32 displays briefing
+    → ESP32 displays briefing across 4 OLED screens
 ```
 
 ---
@@ -63,10 +67,10 @@ Finger on sensor
 ```
 smart-routine-mirror/
 ├── backend/
-│   ├── main.py              # FastAPI app — all user/auth endpoints
-│   ├── device_routes.py     # Device management + IoT login endpoints
+│   ├── main.py              # FastAPI app — auth, user data, quotes, settings
+│   ├── device_routes.py     # Device management + IoT fingerprint login
 │   ├── database.py          # SQLAlchemy engine + session factory
-│   ├── models.py            # ORM models (users, devices, fingerprints …)
+│   ├── models.py            # ORM models (users, devices, fingerprints, quotes …)
 │   ├── schemas.py           # Pydantic request/response schemas
 │   ├── auth.py              # JWT, password hashing, dual-auth dependency
 │   ├── requirements.txt
@@ -74,17 +78,79 @@ smart-routine-mirror/
 ├── frontend/
 │   ├── login.html           # Login page (entry point)
 │   ├── register.html        # Registration page
-│   ├── dashboard.html       # Authenticated dashboard
-│   ├── devices.html         # Device management page
+│   ├── dashboard.html       # Weather, schedule, news, quotes, device key
+│   ├── devices.html         # Device management — members + fingerprint slots
 │   ├── auth.js              # Login / register logic
-│   ├── dashboard.js         # Dashboard data + device token management
+│   ├── dashboard.js         # Dashboard data + quotes + display settings
 │   ├── devices.js           # Device registration, members, fingerprint mappings
 │   └── style.css            # Shared dark-theme styles
 ├── esp32/
-│   ├── esp32_smart_assistant.ino   # Main sketch (flash after enrolling)
-│   └── fingerprint_enroll.ino      # Enrollment utility (flash first)
+│   ├── multidisplay.ino         # Main sketch — 4 OLEDs + fingerprint + Wi-Fi
+│   ├── README_multidisplay.md   # Full pin-to-pin wiring for all hardware
+│   ├── fingerprint_enroll.ino   # Standalone enrollment utility (optional)
+│   └── Testing/
+│       └── esp32s3_wifi_testing.ino  # Wi-Fi connectivity probe
 └── README.md
 ```
+
+---
+
+## Hardware
+
+### XIAO ESP32-S3 (Seeed Studio)
+
+The **XIAO ESP32-S3** is a thumb-sized dual-core 240 MHz microcontroller with built-in Wi-Fi (802.11 b/g/n). It is the brain of the smart mirror.
+
+> ⚠ **Pin note:** The XIAO ESP32-S3 exposes **D0–D10** (GPIO1–9, GPIO43, GPIO44).
+> GPIO17 and GPIO18 are **not available** on this board.
+> Fingerprint UART uses **D6 (GPIO43)** and **D7 (GPIO44)**.
+
+```
+XIAO ESP32-S3 — accessible pins
+──────────────────────────────────────────────────────────────
+D0  GPIO1   D1  GPIO2   D2  GPIO3   D3  GPIO4   D4  GPIO5 (SDA)
+D5  GPIO6 (SCL)         D6  GPIO43 (TX) D7  GPIO44 (RX)
+D8  GPIO7   D9  GPIO8   D10 GPIO9
+```
+
+### Full hardware list
+
+| Qty | Part | Purpose |
+|-----|------|---------|
+| 1 | XIAO ESP32-S3 (Seeed Studio) | Main MCU + Wi-Fi |
+| 1 | WCMCU-9548 / TCA9548A | I2C multiplexer for 4 OLEDs |
+| 4 | SSD1306 OLED 128×64 (I2C, 3.3 V) | 4 display panels |
+| 1 | Adafruit Fingerprint Sensor AS608 / R307 | Per-user biometric ID |
+| 1 | HC-SR04 ultrasonic distance sensor | Auto-sleep / presence detection |
+| 2 | LEDs — 1× yellow, 1× blue | Weather mood indicator |
+| 2 | 220 Ω resistors | LED current limiting |
+| 3 | Momentary push-buttons | Profile scroll + confirm |
+| — | Dupont wires, breadboard | Connections |
+
+---
+
+## Pin Allocation — XIAO ESP32-S3
+
+All 11 header pins are used. No pin is wasted, none overlap.
+
+| XIAO | GPIO | Connected to |
+|------|------|--------------|
+| D0 | GPIO1 | BTN_NEXT — scroll up / prev |
+| D1 | GPIO2 | BTN_DONE — scroll down / next |
+| D2 | GPIO3 | BTN_SEL — confirm (hold 3 s = switch profile) |
+| D3 | GPIO4 | LED Yellow — 220 Ω in series |
+| D4 | GPIO5 | SDA — TCA9548A → 4× OLEDs |
+| D5 | GPIO6 | SCL — TCA9548A → 4× OLEDs |
+| D6 | GPIO43 | Fingerprint TX (ESP32 → sensor RX) |
+| D7 | GPIO44 | Fingerprint RX (sensor TX → ESP32) |
+| D8 | GPIO7 | LED Blue — 220 Ω in series |
+| D9 | GPIO8 | HC-SR04 ECHO (via 1kΩ+2kΩ voltage divider) |
+| D10 | GPIO9 | HC-SR04 TRIG |
+| 3V3 | — | TCA9548A, all 4 OLEDs, fingerprint sensor |
+| 5V | — | HC-SR04 VCC |
+| GND | — | All components |
+
+> Full pin-to-pin wiring with ASCII diagrams: see [esp32/README_multidisplay.md](esp32/README_multidisplay.md).
 
 ---
 
@@ -100,52 +166,56 @@ smart-routine-mirror/
 
 ```bash
 cd backend
-python -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
-pip install -r requirements.txt
+source venv/bin/activate        # or: pip install -r requirements.txt
+# Windows: venv\Scripts\activate
 
-# Optional: configure API keys and JWT secret
+# Optional: add API keys and a custom JWT secret
 cp .env.example .env
-# Edit .env with your values
+# Edit .env
 
-cd backend && uvicorn main:app --reload --host 0.0.0.0 --port 8000
+# Run from inside backend/ (modules use relative imports)
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-The backend is available at `http://localhost:8000`.  
-Interactive API docs: `http://localhost:8000/docs`  
-The SQLite database (`smart_assistant.db`) is created automatically on first run.
+- Dashboard: `http://localhost:8000`
+- Interactive API docs: `http://localhost:8000/docs`
+- SQLite database (`smart_assistant.db`) is created automatically on first run.
+
+### Reset the database
+
+```bash
+rm backend/smart_assistant.db
+# Restart the server — tables are re-created, all users must re-register
+```
 
 ---
 
 ## Frontend
 
-The frontend is served directly by the FastAPI backend from the `frontend/` folder.  
-Open `http://localhost:8000` — it redirects to `/login.html` automatically.
+Served directly by the FastAPI backend — no separate server needed.
+Open `http://localhost:8000` → redirects to `/login.html`.
 
 ### User flow
 
-1. **`/register.html`** — create an account
-2. **`/login.html`** — sign in → redirected to dashboard
-3. **`/dashboard.html`** — your weather, schedule, news, and ESP32 device token
-4. **`/devices.html`** — register ESP32 devices, add family members, map fingerprints
+1. `/register.html` — create an account
+2. `/login.html` — sign in → redirected to dashboard
+3. `/dashboard.html` — weather, schedule, news, personal quotes, water reminder, ESP32 device key
+4. `/devices.html` — register ESP32 devices, add family members, map fingerprint slots
 
 ---
 
-## User Login and SQL Database
-
-Each user has their own weather location, schedule, and news. Data is isolated by `user_id` on every query.
-
-### Database tables
+## Database Schema
 
 | Table | Purpose |
 |-------|---------|
 | `users` | Username, email, bcrypt password hash |
-| `user_settings` | One row per user — weather location |
+| `user_settings` | One row per user — weather location, water interval (min) |
 | `schedule_items` | Schedule entries with `user_id` + `date` |
+| `user_quotes` | Personal quotes shown on the greeting display |
 | `device_tokens` | Permanent per-user ESP32 API key (`X-Device-Token`) |
-| `devices` | Registered physical devices — `device_code`, `device_name`, `device_secret` |
+| `devices` | Registered physical devices — `device_code`, `device_secret` |
 | `device_users` | Many-to-many: device ↔ user, with role (`owner` / `member`) |
-| `device_fingerprints` | Maps sensor slot ID → `user_id` per device |
+| `device_fingerprints` | Maps sensor slot ID (1–127) → `user_id` per device |
 
 ### JWT authentication flow
 
@@ -157,31 +227,24 @@ Every API request: Authorization: Bearer <token>
 Backend decodes token → user_id → filters all queries
 ```
 
-### Reset the database
-
-```bash
-rm backend/smart_assistant.db
-# Restart the server — tables are re-created automatically
-```
-
 ---
 
-## Multi-User Device Management
+## Multi-User Device Setup
 
-One physical ESP32 can serve an entire family.  Each person's fingerprint is stored locally on the sensor (up to 127 slots). The backend maps each slot to a user account.
+One XIAO ESP32-S3 serves an entire family. Each person's fingerprint is stored locally on the sensor (up to 127 slots). The backend maps each slot to a user account.
 
-### Setup sequence (one-time per device)
+### One-time setup sequence
 
-1. **Enroll fingerprints** — flash `fingerprint_enroll.ino`, follow Serial Monitor prompts for each person. Note each slot ID.
-2. **Register the device** — go to `/devices.html` → "Register a new device". Copy the generated **Device ID** and **Device Secret**.
-3. **Add family members** — still on devices page, invite by email. They must have an account.
-4. **Map fingerprints** — for each enrolled slot, select the user and click "Add Mapping".
-5. **Flash the main sketch** — paste `DEVICE_ID` and `DEVICE_SECRET` into `esp32_smart_assistant.ino` and flash.
+1. **Register the device** — go to `/devices.html` → "Register a new device" → copy **Device ID** and **Device Secret**.
+2. **Add family members** — invite by email. They must each have an account.
+3. **Map fingerprint slots** — on the Devices page, add slot → user mappings (slots 1, 2, 3 for up to 3 profiles).
+4. **Flash `multidisplay.ino`** — fill in SSID, password, SERVER_URL, DEVICE_ID, DEVICE_SECRET.
+5. **Enroll fingerprints on-device** — boot the mirror, select a profile, place an unenrolled finger → the sketch walks you through a 2-scan enrollment automatically.
 
 ### Role-based access
 
-| Role | Can do |
-|------|--------|
+| Role | Permissions |
+|------|-------------|
 | `owner` | Add/remove members, manage fingerprint mappings, see device secret |
 | `member` | View their own fingerprint mappings |
 
@@ -189,8 +252,8 @@ One physical ESP32 can serve an entire family.  Each person's fingerprint is sto
 
 ## API Reference
 
-All user endpoints require `Authorization: Bearer <token>`.  
-Device IoT endpoint uses `device_secret` in the POST body instead (no JWT).
+All user endpoints require `Authorization: Bearer <token>`.
+The IoT login endpoint uses `device_secret` in the POST body (no JWT).
 
 ### Auth
 
@@ -204,17 +267,21 @@ Device IoT endpoint uses `device_secret` in the POST body instead (no JWT).
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET`  | `/api/dashboard-data` | Combined weather + schedule + news |
+| `GET`  | `/api/dashboard-data` | Combined weather + schedule + news + quotes |
 | `GET`  | `/api/weather` | Weather for the user's saved location |
 | `POST` | `/api/location` | Update location `{"location": "Berlin"}` |
 | `GET`  | `/api/schedule` | Today's schedule |
 | `POST` | `/api/schedule` | Add item `{"time": "09:00", "task": "Meeting"}` |
 | `DELETE` | `/api/schedule/{id}` | Delete a schedule item |
 | `GET`  | `/api/news` | Latest 5 headlines |
-| `GET`  | `/api/device/token` | Get the permanent device token |
+| `GET`  | `/api/quotes` | List personal quotes |
+| `POST` | `/api/quotes` | Add a quote `{"text": "...", "sort_order": 0}` |
+| `PUT`  | `/api/quotes/{id}` | Update a quote |
+| `DELETE` | `/api/quotes/{id}` | Delete a quote |
+| `GET`  | `/api/device/token` | Get the permanent single-user device token |
 | `POST` | `/api/device/token` | Generate / regenerate device token |
 
-### Device management (protected, owner-only where noted)
+### Device management (protected)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -224,383 +291,194 @@ Device IoT endpoint uses `device_secret` in the POST body instead (no JWT).
 | `GET`  | `/api/devices/{id}/users` | List members |
 | `POST` | `/api/devices/{id}/users` | Add a member by email *(owner)* |
 | `DELETE` | `/api/devices/{id}/users/{uid}` | Remove a member *(owner)* |
-| `GET`  | `/api/devices/{id}/fingerprints` | List fingerprint mappings |
-| `POST` | `/api/devices/{id}/fingerprints` | Add a mapping *(owner)* |
+| `GET`  | `/api/devices/{id}/fingerprints` | List fingerprint slot mappings |
+| `POST` | `/api/devices/{id}/fingerprints` | Add a slot → user mapping *(owner)* |
 | `DELETE` | `/api/devices/{id}/fingerprints/{fpid}` | Remove a mapping |
 
 ### IoT device login (no JWT — used by ESP32)
 
 ```
 POST /api/devices/{device_id}/login
-Body: { "fingerprint_id": 3, "device_secret": "abc123..." }
+Body: { "fingerprint_id": 1, "device_secret": "abc123..." }
 ```
 
-**Response (success):**
+**Success response:**
 ```json
 {
   "success": true,
-  "user": { "id": 2, "username": "Alice" },
+  "user":     { "id": 2, "username": "Alice" },
   "weather":  { "location": "Berlin", "temperature": 18, "condition": "Cloudy",
                 "humidity": 65, "wind_speed": 12 },
-  "schedule": { "date": "2026-05-24",
+  "schedule": { "date": "2026-06-27",
                 "items": [{ "id": 5, "time": "09:00", "task": "Stand-up" }] },
   "news":     { "headlines": ["Headline one", "Headline two", "Headline three"] },
-  "timestamp": "2026-05-24T07:30:00"
+  "quotes":   ["Quote one", "Quote two"],
+  "settings": { "water_interval_min": 60 },
+  "timestamp": "2026-06-27T07:30:00"
 }
 ```
 
-**Response (fingerprint not mapped):**
+**Fingerprint not mapped:**
 ```json
-{ "success": false, "message": "Fingerprint slot 3 not registered on this device." }
+{ "success": false, "message": "Fingerprint slot 1 not registered on this device." }
 ```
 
 ---
 
-## ESP32-S3 Hardware Guide
+## ESP32 Sketch — `multidisplay.ino`
 
-### What is the ESP32-S3?
+### Arduino IDE setup
 
-The **ESP32-S3** is a dual-core 240 MHz microcontroller made by Espressif with built-in Wi-Fi (802.11 b/g/n) and Bluetooth. It is the "brain" of the smart mirror device.
+**1. Install Arduino IDE 2** from [arduino.cc/en/software](https://www.arduino.cc/en/software).
 
-A **dev board** (development board) breaks all the chip's tiny pins out to rows of larger pins so you can prototype with jumper wires. Common boards: ESP32-S3-DevKitC-1, Unexpected Maker FeatherS3, LILYGO T-Display-S3.
-
-```
-┌─────────────────────────────────────────────────────┐
-│                  ESP32-S3 Dev Board                 │
-│                                                     │
-│  USB-C ──► 3.3 V regulator ──► MCU chip            │
-│                                                     │
-│  Left pin row:          Right pin row:              │
-│  GND  ●                           ● 3V3             │
-│  GPIO ●  ← Digital I/O            ● GPIO            │
-│  GPIO ●  ← UART TX/RX             ● GPIO            │
-│  GPIO ●  ← I2C SDA/SCL            ● GPIO            │
-│  GPIO ●  ← SPI MOSI/MISO/CLK      ● GPIO            │
-│  …                                                  │
-└─────────────────────────────────────────────────────┘
-```
-
-**Pin types you'll use:**
-| Pin label | What it does |
-|-----------|-------------|
-| `3V3` | 3.3 V power output — powers the sensor |
-| `GND` | Ground reference — must be shared with every component |
-| `GPIO17` | UART2 TX — ESP32 sends data to sensor |
-| `GPIO18` | UART2 RX — ESP32 receives data from sensor |
-| `GPIO8` | I2C SCL — clock for OLED display (optional) |
-| `GPIO9` | I2C SDA — data for OLED display (optional) |
-
-> All ESP32-S3 GPIO pins operate at **3.3 V logic**. Do not connect 5 V signals directly.
-
----
-
-### Fingerprint Sensor
-
-The sketch is compatible with the **R307**, **R503**, and **AS608** optical fingerprint sensors (all use the same UART protocol and work with the Adafruit Fingerprint Sensor Library).
-
-**How it works internally:**
-
-```
-Finger placed on glass window
-       ↓
-Optical image captured (LED illuminates fingertip)
-       ↓
-Sensor CPU extracts feature points (minutiae)
-       ↓
-Creates a mathematical template
-       ↓
-Compares template against all stored templates
-       ↓
-Returns: matched slot ID + confidence score (0–100)
-         OR "not found"
-```
-
-Templates are stored **inside the sensor chip** (flash memory, up to 127 slots). They never leave the sensor as raw images — only the slot ID is sent to the ESP32 and then to the backend.
-
-**Sensor connector pins (4 wires):**
-
-| Sensor pin | Wire colour (typical) | Connect to |
-|------------|-----------------------|------------|
-| VCC / VIN  | Red | ESP32 `3V3` |
-| GND        | Black | ESP32 `GND` |
-| TX (sensor transmits) | Yellow/Green | ESP32 `GPIO 18` (UART2 RX) |
-| RX (sensor receives)  | White/Blue   | ESP32 `GPIO 17` (UART2 TX) |
-
-> **Cross the TX/RX lines.** The sensor's TX goes to the ESP32's RX, and vice versa. This is standard serial wiring.
-
----
-
-### Wiring Diagram
-
-```
-ESP32-S3 Dev Board                Fingerprint Sensor
-─────────────────                 ─────────────────
-3V3  ───────────────────────────► VCC
-GND  ───────────────────────────► GND
-GPIO 17 (UART2 TX) ─────────────► RX
-GPIO 18 (UART2 RX) ◄─────────────  TX
-```
-
-Full breadboard layout:
-
-```
-[ESP32-S3]              [Breadboard]           [Sensor]
- 3V3 ──────────────── (+) rail ─────────────── VCC
- GND ──────────────── (-) rail ─────────────── GND
- GPIO17 ─────────────────────────────────────── RX
- GPIO18 ─────────────────────────────────────── TX
-```
-
----
-
-### Optional OLED Display (SSD1306)
-
-A 0.96″ or 1.3″ OLED replaces the Serial Monitor with a physical screen on the mirror.
-
-**Wiring (I2C, 4 wires):**
-
-| OLED pin | Connect to |
-|----------|------------|
-| VCC | ESP32 `3V3` |
-| GND | ESP32 `GND` |
-| SCL | ESP32 `GPIO 8` |
-| SDA | ESP32 `GPIO 9` |
-
-Required library: **Adafruit SSD1306** + **Adafruit GFX** (both in Library Manager).
-
----
-
-### Optional TFT Display (ILI9341 / ST7789)
-
-A 2.4″–2.8″ colour TFT gives more space for the briefing.
-
-**Wiring (SPI, 7 wires):**
-
-| TFT pin | Connect to |
-|---------|------------|
-| VCC | ESP32 `3V3` |
-| GND | ESP32 `GND` |
-| CS  | GPIO 10 |
-| RST | GPIO 11 |
-| DC  | GPIO 12 |
-| MOSI | GPIO 13 |
-| CLK | GPIO 14 |
-
-Required library: **Adafruit ILI9341** or **TFT_eSPI** (Library Manager).
-
----
-
-### Parts List
-
-| Component | Model / notes | Approx. price |
-|-----------|--------------|---------------|
-| ESP32-S3 dev board | ESP32-S3-DevKitC-1 (38-pin) or similar | €8–15 |
-| Fingerprint sensor | R307, R503, or AS608 (optical, UART, 4-pin JST) | €8–12 |
-| OLED display *(optional)* | SSD1306, 0.96″ I2C, 128×64 px | €3–5 |
-| TFT display *(optional)* | ILI9341, 2.4″ SPI, 240×320 px | €6–10 |
-| Breadboard | 400-tie or 830-tie | €2–4 |
-| Jumper wires | Male-to-male + male-to-female set | €2–3 |
-| USB-C cable | Data-capable (not charge-only) | €2–4 |
-| **Total (minimum)** | ESP32 + sensor + wires | **~€20–35** |
-
-Where to buy: AliExpress (cheapest, 2–4 week shipping), Amazon, Mouser, LCSC, Berrybase (Germany).
-
----
-
-### Arduino IDE Setup (Step by Step)
-
-**1. Install Arduino IDE 2**  
-Download from [arduino.cc/en/software](https://www.arduino.cc/en/software).
-
-**2. Add ESP32 board support**  
+**2. Add ESP32 board support**
 `File → Preferences → Additional Board Manager URLs`, add:
 ```
 https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
 ```
-Then: `Tools → Board → Boards Manager` → search `esp32` → install **esp32 by Espressif Systems** (2.x or 3.x).
+`Tools → Board → Boards Manager` → search `esp32` → install **esp32 by Espressif Systems**.
 
-**3. Install required libraries**  
-`Tools → Library Manager`, install all three:
-- **Adafruit Fingerprint Sensor Library** (by Adafruit)
-- **ArduinoJson** (by Benoit Blanchon — v6 or v7 both work)
-- *(optional)* **Adafruit SSD1306** + **Adafruit GFX** for OLED
+**3. Select board**
+`Tools → Board → esp32 → XIAO_ESP32S3`
 
-**4. Select your board**  
-`Tools → Board → esp32 → ESP32S3 Dev Module`
+**4. Install required libraries** (`Tools → Library Manager`):
+- **Adafruit Fingerprint Sensor Library** (Adafruit)
+- **Adafruit SSD1306** (Adafruit)
+- **Adafruit GFX Library** (Adafruit)
+- **ArduinoJson** (Benoit Blanchon — v6 or v7)
 
-Configure:
-- USB CDC On Boot: **Enabled**
-- Upload Speed: **921600**
-- Flash Mode: **QIO 80MHz**
+**5. Connect and flash**
+Plug in via USB-C. `Tools → Port` → select the port that appears.
+If no port appears: hold **BOOT**, tap **RESET**, release BOOT (enters download mode).
 
-**5. Connect and find the port**  
-Plug in via USB-C. `Tools → Port` → select the port that appears (e.g. `/dev/ttyUSB0` or `COM3`).
+### Sketch configuration
 
-If no port appears:
-- Press and hold **BOOT**, tap **RESET**, release BOOT (enters download mode).
-- Install CP2102 or CH340 USB driver if the port still doesn't show.
-
----
-
-### Fingerprint Enrollment (one-time per user)
-
-> You only need to do this once. After enrollment, flash the main sketch and never touch `fingerprint_enroll.ino` again unless you want to add a new user.
-
-**Step 1 — Flash the enrollment sketch**
-
-Open `esp32/fingerprint_enroll.ino` in Arduino IDE and upload it.
-
-**Step 2 — Open Serial Monitor**
-
-`Tools → Serial Monitor`, set baud rate to **115200**.
-
-You should see:
-```
-════════════════════════════════════════════
-  Fingerprint Enrollment — Smart Morning Assistant
-════════════════════════════════════════════
-
-Sensor ready.  Enrolled templates: 0 / 127
-
-Type a slot ID (1–127) and press Enter to enroll a new finger:
-```
-
-**Step 3 — Enroll each finger**
-
-For each person:
-1. Type a slot number (e.g. `1`) and press **Enter**.
-2. Place the finger firmly on the sensor when asked → first scan.
-3. Lift the finger when asked.
-4. Place the **same finger** again → second scan.
-5. The sketch creates a template and stores it. You see:
-
-```
-════════════════════════════════════════════
-  ✓ Fingerprint stored in slot 1
-════════════════════════════════════════════
-  Next step:
-  1. Go to the web dashboard → Devices page.
-  2. Select your device.
-  3. Under 'Fingerprint Mappings', add:
-       Slot ID: 1  →  select the user's account.
-════════════════════════════════════════════
-```
-
-6. Repeat for each family member using different slot numbers.
-
-**Slot ID tips:**
-- Use any number 1–127; they don't need to be consecutive.
-- Write down which slot belongs to which person before closing the Serial Monitor.
-- If you type a slot that's already used, the sketch asks you to confirm overwrite with `y`.
-
-**Step 4 — Map slots in the dashboard**
-
-Go to `/devices.html`, select your device, and under **Fingerprint Mappings** add each slot → user pairing.
-
-**Step 5 — Flash the main sketch**
-
-Open `esp32/esp32_smart_assistant.ino`, fill in the four constants, and upload.
-
----
-
-### Main Sketch Configuration
-
-Open `esp32/esp32_smart_assistant.ino` and edit the constants at the top before flashing:
+Edit the constants at the top of `esp32/multidisplay.ino`:
 
 ```cpp
-const char* WIFI_SSID     = "YOUR_WIFI_SSID";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
-
-// LAN IP of the machine running uvicorn
-// Find it with: ip addr (Linux) or ipconfig (Windows)
-const char* SERVER_URL    = "http://192.168.X.X:8000";
-
-// From the web dashboard → Devices page → select your device
-const int   DEVICE_ID     = 1;
-const char* DEVICE_SECRET = "PASTE_DEVICE_SECRET_HERE";
+const char* WIFI_SSID     = "YourSSID";        // 2.4 GHz only
+const char* WIFI_PASSWORD = "YourPassword";
+const char* SERVER_URL    = "http://YOUR_SERVER_IP:8000";
+const int   DEVICE_ID     = 1;                 // from Devices page
+const char* DEVICE_SECRET = "paste_device_secret_here";
+const char* DEVICE_TOKEN  = "paste_64char_token_here"; // Dashboard → ESP32 Device Key
 ```
 
-Flash, open Serial Monitor at 115200 baud, and place a finger:
+### Fingerprint sensor — XIAO ESP32-S3 wiring
+
+> ⚠ Generic guides often show **GPIO17 / GPIO18** for fingerprint UART.
+> Those pins do **not exist** on the XIAO ESP32-S3.
+> Use **D6 (GPIO43)** and **D7 (GPIO44)** instead.
 
 ```
-╔══════════════════════════════════════════════════╗
-║  Good morning,   Alice!                          ║
-╚══════════════════════════════════════════════════╝
-
-[WEATHER]
-  Berlin — 18°C, Cloudy
-  Humidity 65%   Wind 12 km/h
-
-[TODAY'S SCHEDULE]
-  09:00  Stand-up
-  14:00  Dentist
-
-[NEWS]
-  1. Headline one
-  2. Headline two
-  3. Headline three
+XIAO ESP32-S3                       Fingerprint Sensor
+─────────────                       ──────────────────
+3V3  ────────────────────────────► VCC  (Red wire)
+GND  ────────────────────────────► GND  (Black wire)
+D6 / GPIO43  (UART1 TX) ─────────► RX   (White wire)
+D7 / GPIO44  (UART1 RX) ◄─────────  TX   (Yellow wire)
 ```
+
+Cross the TX/RX — sensor TX → ESP32 RX, sensor RX → ESP32 TX.
+
+### On-device fingerprint enrollment
+
+No need to flash a separate sketch. The mirror handles enrollment automatically:
+
+1. Select a profile with BTN_NEXT / BTN_DONE → confirm with BTN_SEL.
+2. Place finger → if not enrolled, "Press SEL to enroll" appears.
+3. Press BTN_SEL → "Place finger" → lift → "Place again" → stored in sensor slot.
+4. Go to **Dashboard → Devices → Fingerprint Mappings**, link the slot number to the user.
+5. Place finger again → logged in.
+
+### Sketch boot flow
+
+```
+Power on
+    → All 4 displays: "Connecting..."
+    → Wi-Fi connects
+    → Display 0: Profile selection  (other 3: "Smart Mirror")
+    → Scroll BTN_NEXT / BTN_DONE,  confirm BTN_SEL
+    → Display 0: "Place finger..."
+    → Match found  →  POST /api/devices/{id}/login  →  dashboard loads
+    → No match     →  enrollment wizard
+```
+
+### Dashboard controls
+
+| Screen | BTN_NEXT (D0) | BTN_DONE (D1) | BTN_SEL (D2) |
+|--------|---------------|---------------|---------------|
+| Profile select | Scroll up | Scroll down | Confirm profile |
+| FP scan / enroll | Cancel | — | Confirm enroll |
+| Greeting (CH 0) | Prev quote | Next quote | Cycle active display |
+| Weather  (CH 1) | Toggle °C/°F | Toggle °C/°F | Cycle active display |
+| News     (CH 2) | Prev headline | Next headline | Cycle active display |
+| Schedule (CH 3) | Next task | Toggle done | Cycle active display |
+
+**Hold BTN_SEL for 3 s** in dashboard → returns to profile selection (switch user).
 
 ---
 
-### How the UART Communication Works
+## How UART Works (for reference)
 
-UART (Universal Asynchronous Receiver/Transmitter) is a simple two-wire serial protocol — one wire sends, one wire receives, both sides agree on the speed in advance (57600 baud here).
+UART is a simple two-wire serial protocol. Both sides agree on speed in advance (57600 baud).
 
 ```
-ESP32 GPIO17 (TX) ──────────────────────► Sensor RX
-                         57600 baud
-ESP32 GPIO18 (RX) ◄────────────────────── Sensor TX
+XIAO D6 / GPIO43 (UART1 TX) ──────────────────────► Sensor RX
+                                    57600 baud
+XIAO D7 / GPIO44 (UART1 RX) ◄──────────────────────  Sensor TX
 ```
 
 The Adafruit Fingerprint Library handles the low-level protocol:
 
 ```
-Library call               Bytes sent over UART             Sensor response
-────────────────────────────────────────────────────────────────────────────
-finger.getImage()      →   [header][command:0x01][…]   →   OK / NOFINGER
-finger.image2Tz(1)     →   [header][command:0x02][…]   →   OK / IMAGEMESS
-finger.fingerSearch()  →   [header][command:0x04][…]   →   slot_id + confidence
-finger.storeModel(n)   →   [header][command:0x06][n]   →   OK / BADLOCATION
+Library call               Action
+────────────────────────── ──────────────────────────────────────
+finger.getImage()      →   Capture image from sensor
+finger.image2Tz(1)     →   Extract feature template (slot 1)
+finger.fingerFastSearch()→  Compare against all stored templates
+finger.storeModel(n)   →   Save matched template to slot n
 ```
 
-The `HardwareSerial sensorSerial(2)` line tells the ESP32 to use its second UART hardware block (UART2), which maps to GPIO17 and GPIO18 by default.
+---
+
+## Common Problems & Fixes
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Fingerprint sensor not detected | TX/RX swapped or wrong pins | On XIAO: use D6 (GPIO43) TX, D7 (GPIO44) RX — crossed to sensor |
+| `API error -1` at boot | `SERVER_URL` is a placeholder | Set your server's actual LAN IP |
+| `API error 401` | Wrong device secret or token | Re-copy from Dashboard → Devices page |
+| `API error 404` | Wrong device ID | Check the integer on the Devices page |
+| No Wi-Fi | Wrong SSID/password or 5 GHz network | ESP32 supports **2.4 GHz only** |
+| OLEDs blank | VCC too high or wrong I2C pins | 3.3 V only; SDA=D4, SCL=D5 |
+| TCA9548A not found | A0/A1/A2 not tied to GND | All three address pins → GND (address 0x70) |
+| No sleep / ECHO always 0 | TRIG/ECHO swapped or missing voltage divider | 5 V sensor needs 1kΩ+2kΩ divider on ECHO |
+| LEDs never light | Data not fetched yet | Wait for first successful API response |
+| Port not in Arduino IDE | USB driver or charge-only cable | Install CP2102/CH340 driver; try a data cable |
+| Upload fails / timeout | ESP32 not in download mode | Hold BOOT, tap RESET, release BOOT before Upload |
+| Low fingerprint confidence (<30) | Dirty sensor or dry finger | Clean glass; breathe lightly on fingertip first |
 
 ---
 
-### Common Problems & Fixes
-
-| Symptom | Most likely cause | Fix |
-|---------|-------------------|-----|
-| `ERROR: Fingerprint sensor not detected` | Wiring mistake | Check TX↔RX are **crossed** — sensor TX → ESP32 RX, not TX→TX |
-| Port does not appear in Arduino IDE | USB driver missing or charge-only cable | Install CP2102/CH340 driver; try a different USB cable |
-| Upload fails / times out | ESP32 not in download mode | Hold BOOT, tap RESET, release BOOT before clicking Upload |
-| First scan succeeds, second fails | Finger placed at different angle | Use a relaxed, flat press — same orientation both scans |
-| `HTTP error 401` in Serial Monitor | Wrong device secret | Re-copy `DEVICE_SECRET` from the dashboard |
-| `HTTP error 404` in Serial Monitor | Wrong device ID | Check `DEVICE_ID` matches the integer shown on the dashboard |
-| `No Wi-Fi` in Serial Monitor | Wrong SSID/password, or 5 GHz network | ESP32 only supports 2.4 GHz; double-check credentials |
-| Finger recognised but wrong user | Slot mapped to wrong account | Check the Fingerprint Mappings table on the devices page |
-| `Fingerprints did not match` during enrollment | Two different fingers, or too much movement | Use the **same finger**, flat and still, both scans |
-| Sensor works but very low confidence (<30) | Dirty sensor glass or dry finger | Clean glass with a soft cloth; breathe lightly on fingertip |
-
----
-
-### Full Demo Walkthrough
+## Full Demo Walkthrough
 
 ```bash
-# Terminal 1 — backend
-cd backend && uvicorn main:app --reload --host 0.0.0.0 --port 8000
+# Start the backend
+cd backend && source venv/bin/activate
+uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-1. Open `http://localhost:8000` → create an account and sign in.
+1. Open `http://YOUR_SERVER_IP:8000` → register an account → sign in.
 2. Set your weather location on the dashboard.
-3. Add schedule items.
-4. Go to **Devices** → register a device → copy **Device ID** and **Device Secret**.
-5. Add family members by email; they must each register an account first.
-6. Flash `fingerprint_enroll.ino`, enroll each finger, note slot IDs.
-7. Back in the dashboard, add fingerprint mappings (slot → user).
-8. Flash `esp32_smart_assistant.ino` with your Wi-Fi + Device ID + Device Secret.
-9. Place a finger on the sensor → personalised briefing appears.
+3. Add schedule items and personal quotes.
+4. Go to **Devices** → register a device → copy Device ID and Device Secret.
+5. Add family members by email (they each need an account).
+6. Wire up the hardware per [esp32/README_multidisplay.md](esp32/README_multidisplay.md).
+7. Fill in the 5 constants in `multidisplay.ino` → flash.
+8. On the mirror: select your profile → enroll finger when prompted.
+9. Back on the Devices page: link the slot number to your user account.
+10. Place finger again → personalised briefing appears across all 4 screens.
 
 ---
 
@@ -608,9 +486,9 @@ cd backend && uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 - Google Calendar / CalDAV integration for automatic schedule sync
 - News preferences per user (category, country)
-- E-ink display output for always-on mirror display
+- E-ink display output for always-on mirror panel
 - Smart mirror enclosure with a two-way mirror panel
 - OTA (Over-the-Air) firmware updates for the ESP32
 - Mobile push notifications
-- Deployment to a cloud server (Railway, Render, Fly.io)
-- Voice response via I2S speaker on ESP32
+- Cloud deployment (Railway, Render, Fly.io)
+- Voice response via I2S speaker

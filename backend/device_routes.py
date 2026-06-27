@@ -116,11 +116,15 @@ async def _build_dashboard(user: models.User, db: Session) -> dict:
     weather  = await _fetch_weather(location)
     schedule = _get_today_schedule(user.id, db)
     news     = await _fetch_news()
+    quotes   = [q.text for q in sorted(user.quotes, key=lambda x: x.sort_order)]
+    water    = (user.settings.water_interval_min if user.settings else 60)
     return {
         "user":      {"id": user.id, "username": user.username},
         "weather":   weather,
         "schedule":  schedule,
         "news":      news,
+        "quotes":    quotes,
+        "settings":  {"water_interval_min": water},
         "timestamp": datetime.now().isoformat(),
     }
 
