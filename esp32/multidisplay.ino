@@ -75,10 +75,8 @@ char profileName[NUM_PROFILES][20] = {"Alice", "Bob", "Charlie"};
 #define DEBOUNCE_MS   200UL
 #define LONG_PRESS_MS 3000UL
 
-#define LED_YELLOW  4    // D3 / GPIO4
-#define LED_BLUE    7    // D8 / GPIO7
-// LED_RED removed — GPIO8 now used for fingerprint RX
-// Storm = both Yellow + Blue on simultaneously
+// LED_YELLOW, LED_BLUE moved to ESP8266 (IO_OUT_YELLOW / IO_OUT_BLUE)
+// GPIO4 and GPIO7 on ESP32-S3 are now free
 
 #define TRIG_PIN    9    // D10 / GPIO9
 #define ECHO_PIN   44    // D7  / GPIO44  ← unchanged
@@ -86,7 +84,56 @@ char profileName[NUM_PROFILES][20] = {"Alice", "Bob", "Charlie"};
 #define FP_TX      43    // D6 / GPIO43  (ESP32 TX → sensor RX)  was free
 #define FP_RX       8    // D9 / GPIO8   (sensor TX → ESP32 RX)  was LED_RED
 
-#define PRESENCE_CM      200
+// ── ESP8266 I/O expander (UART — more reliable than I2C slave) ───────────────
+// ESP32-S3 D3/GPIO4 = TX → ESP8266 D1/GPIO5 = RX
+// ESP32-S3 D8/GPIO7 = RX ← ESP8266 D2/GPIO4 = TX
+#define IO_SERIAL_RX   7   // D8 / GPIO7
+#define IO_SERIAL_TX   4   // D3 / GPIO4
+HardwareSerial ioSerial(2);
+
+// Byte sent TO ESP8266 — output bitmask:
+#define IO_OUT_BUZZ    0x01   // bit0 — buzzer
+#define IO_OUT_RED     0x02   // bit1 — red LED   (storm)
+#define IO_OUT_YELLOW  0x04   // bit2 — yellow LED (sun/wind/storm)
+#define IO_OUT_BLUE    0x08   // bit3 — blue LED   (rain/cloud/snow/storm)
+
+// Byte received FROM ESP8266 — button bitmask:
+#define IO_BTN_DISP0  0x01
+#define IO_BTN_DISP1  0x02
+#define IO_BTN_DISP2  0x04
+#define IO_BTN_DISP3  0x08
+
+bool    ioPresent     = false;
+uint8_t lastIoInput   = 0x00;
+
+void tcaDeselect() {
+  Wire.beginTransmission(TCA_ADDR);
+  Wire.write(0);
+  Wire.endTransmission();
+}
+
+uint8_t ioRead() {
+  if (!ioPresent) return lastIoInput;
+  while (ioSerial.available()) lastIoInput = ioSerial.read();
+  return lastIoInput;
+}
+
+uint8_t ioOutputState = 0x00;
+
+void ioWrite(uint8_t mask) {
+  if (!ioPresent) return;
+  ioOutputState = mask;
+  ioSerial.write(mask);
+}
+
+void ioBuzz(uint16_t durationMs) {
+  uint8_t restore = ioOutputState;
+  ioWrite(restore | IO_OUT_BUZZ);
+  delay(durationMs);
+  ioWrite(restore);
+}
+
+#define PRESENCE_CM      2
 #define SLEEP_MS       60000UL
 #define DATA_REFRESH_MS 60000UL
 #define WATER_SHOW_MS    6000UL
@@ -236,14 +283,31 @@ void printWrapped(const char* text, int16_t x, int16_t y0, uint8_t maxLines) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  WEATHER LEDs  (storm = both Yellow + Blue)
+//  DISPLAY INVERSION  (moved here so oled/currentMode/activeDisplay are in scope)
+// ═══════════════════════════════════════════════════════════════════════════
+
+void refreshInversion() {
+  for (uint8_t ch = 0; ch < 4; ch++) {
+    tcaSelect(ch);
+    bool inv = (currentMode == MODE_NORMAL && ch == (uint8_t)activeDisplay);
+    oled.ssd1306_command(inv ? SSD1306_INVERTDISPLAY : SSD1306_NORMALDISPLAY);
+  }
+  tcaDeselect();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  WEATHER LEDs  — all three on ESP8266 via I2C write byte
 // ═══════════════════════════════════════════════════════════════════════════
 
 void updateWeatherLED() {
   bool on = dataReady && displaysAwake && (currentMode == MODE_NORMAL);
   uint8_t icon = on ? condToIcon(dynCondition) : 255;
-  digitalWrite(LED_YELLOW, (on && (icon==0||icon==1||icon==4||icon==6)) ? HIGH : LOW);
-  digitalWrite(LED_BLUE,   (on && (icon==2||icon==3||icon==4||icon==5)) ? HIGH : LOW);
+  // Preserve buzzer bit; rebuild all LED bits from current weather icon
+  uint8_t iom = ioOutputState & IO_OUT_BUZZ;
+  if (on && (icon==0||icon==1||icon==4||icon==6)) iom |= IO_OUT_YELLOW;
+  if (on && (icon==2||icon==3||icon==4||icon==5)) iom |= IO_OUT_BLUE;
+  if (on && icon==4)                              iom |= IO_OUT_RED;
+  ioWrite(iom);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -255,13 +319,14 @@ void drawUserSelect();   // forward decl
 void displaysOff() {
   for (uint8_t ch = 0; ch < 4; ch++) { tcaSelect(ch); oled.ssd1306_command(SSD1306_DISPLAYOFF); }
   Wire.beginTransmission(TCA_ADDR); Wire.write(0); Wire.endTransmission();
-  digitalWrite(LED_YELLOW, LOW); digitalWrite(LED_BLUE, LOW);
+  ioWrite(0);   // all ESP8266 outputs off during sleep
   displaysAwake = false; Serial.println(F("Sleep."));
 }
 
 void displaysOn() {
   for (uint8_t ch = 0; ch < 4; ch++) { tcaSelect(ch); oled.ssd1306_command(SSD1306_DISPLAYON); }
   displaysAwake = true; updateWeatherLED();
+  refreshInversion();
   if (currentMode == MODE_NORMAL)
     { drawGreeting(); drawWeather(); drawNews(); drawSchedule(); }
   else
@@ -742,6 +807,8 @@ void enterNormalMode() {
   lastWaterMs   = millis();
   updateWeatherLED();
   drawGreeting(); drawWeather(); drawNews(); drawSchedule();
+  refreshInversion();
+  ioBuzz(200);
 }
 
 void enterSelectMode() {
@@ -752,6 +819,7 @@ void enterSelectMode() {
   dynQuoteCount = dynNewsCount = dynTaskCount = 0;
   memset(completed, 0, sizeof(completed));
   updateWeatherLED();
+  refreshInversion();     // clears inversion on all 4 displays
   drawUserSelect();
 }
 
@@ -779,8 +847,7 @@ void setup() {
   pinMode(BTN_SEL,  INPUT_PULLUP);
   pinMode(BTN_NEXT, INPUT_PULLUP);
   pinMode(BTN_DONE, INPUT_PULLUP);
-  pinMode(LED_YELLOW, OUTPUT); digitalWrite(LED_YELLOW, LOW);
-  pinMode(LED_BLUE,   OUTPUT); digitalWrite(LED_BLUE,   LOW);
+  // LED_YELLOW and LED_BLUE moved to ESP8266 — GPIO4/GPIO7 left as default INPUT
   // GPIO8 = FP_RX — do NOT set as OUTPUT
   pinMode(TRIG_PIN, OUTPUT); digitalWrite(TRIG_PIN, LOW);
   pinMode(ECHO_PIN, INPUT);
@@ -789,15 +856,30 @@ void setup() {
   clockRefMs     = millis();
 
   Serial.println(F("Smart Mirror — starting"));
+
+  // UART I/O expander (ESP8266) — TX=D3/GPIO4, RX=D8/GPIO7
+  ioSerial.begin(9600, SERIAL_8N1, IO_SERIAL_RX, IO_SERIAL_TX);
+  delay(2500);   // wait for ESP8266 to boot and start sending button-state bytes
+  while (ioSerial.available()) ioSerial.read();   // drain stale bytes
+  // Send a zero so ESP8266 starts with all outputs off
+  ioSerial.write((uint8_t)0x00);
+  delay(100);
+  ioPresent = true;   // UART doesn't need discovery — always treat as present
+  Serial.println(F("IO expander UART ready (D3 TX / D8 RX)"));
+
   for (uint8_t ch = 0; ch < 4; ch++) {
     if (initOled(ch)) { Serial.print(F("OLED ch")); Serial.print(ch); Serial.println(F(" OK")); }
   }
 
   // Fingerprint sensor on UART1 — TX=D6/GPIO43, RX=D9/GPIO8
   fpSerial.begin(57600, SERIAL_8N1, FP_RX, FP_TX);
+  delay(500);  // sensor needs ~300 ms to power up before first command
   finger.begin(57600);
-  if (finger.verifyPassword()) { Serial.println(F("FP sensor OK")); fpReady = true; }
-  else Serial.println(F("FP sensor not found — check TX=D6, RX=D9"));
+  for (uint8_t i = 0; i < 5 && !fpReady; i++) {
+    if (finger.verifyPassword()) { Serial.println(F("FP sensor OK")); fpReady = true; }
+    else { Serial.printf("FP attempt %d failed\n", i + 1); delay(500); }
+  }
+  if (!fpReady) Serial.println(F("FP sensor not found — check TX=D6(GPIO43), RX=D9(GPIO8)"));
 
   // Connecting splash on all 4 displays
   drawSplash(0, "Connecting...", "");
@@ -854,6 +936,31 @@ void loop() {
   // Long-press BTN_SEL in dashboard → back to user select
   if (selNow && btnSelWasDown && (now - btnSelDownAt >= LONG_PRESS_MS) && currentMode == MODE_NORMAL) {
     enterSelectMode(); btnSelWasDown = false; delay(500); return;
+  }
+
+  // ── ESP8266 7-button expander (polled each loop tick) ─────────────────
+  static uint8_t prevIO = 0;
+  if (ioPresent) {
+    uint8_t ioState = ioRead();
+    uint8_t ioEdge  = ioState & ~prevIO;   // rising edges only
+    prevIO = ioState;
+
+    // Display-select buttons: jump directly to a display and invert it
+    if (currentMode == MODE_NORMAL) {
+      if (ioEdge & IO_BTN_DISP0) {
+        activeDisplay = 0; refreshInversion(); drawGreeting();
+      }
+      if (ioEdge & IO_BTN_DISP1) {
+        activeDisplay = 1; refreshInversion(); drawWeather();
+      }
+      if (ioEdge & IO_BTN_DISP2) {
+        activeDisplay = 2; refreshInversion(); drawNews();
+      }
+      if (ioEdge & IO_BTN_DISP3) {
+        activeDisplay = 3; refreshInversion(); drawSchedule();
+      }
+    }
+    // SEL/NEXT/DONE handled by ESP32-S3 hardware buttons
   }
 
   // ── MODE: User select ───────────────────────────────────────────────────
@@ -927,10 +1034,11 @@ void loop() {
       }
     }
 
-    // BTN_SEL short press → cycle active display
+    // BTN_SEL short press → cycle active display (invert the new one)
     if (selEdge) {
       lastBtnSel    = now;
       activeDisplay = (activeDisplay + 1) % 4;
+      refreshInversion();
       drawGreeting(); drawWeather(); drawNews(); drawSchedule();
     }
 
@@ -962,8 +1070,11 @@ void loop() {
     // Water reminder
     if (!waterAlert && (now - lastWaterMs >= dynWaterMs)) {
       waterAlert=true; waterOnAt=now; lastWaterMs=now; drawSchedule();
+      ioBuzz(400);
     }
-    if (waterAlert && (now - waterOnAt >= WATER_SHOW_MS)) { waterAlert=false; drawSchedule(); }
+    if (waterAlert && (now - waterOnAt >= WATER_SHOW_MS)) {
+      waterAlert=false; drawSchedule();
+    }
 
     // Auto-refresh displays
     if (now - lastGreet >= GREET_REFRESH_MS) { drawGreeting(); lastGreet=now; }

@@ -745,6 +745,39 @@ footer {
   margin-bottom: 0.25rem;
 }
 
+/* ── News category pills ─────────────────────────────────────────────────────── */
+
+#news-category-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.5rem 0 0.75rem;
+}
+
+.cat-pill {
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.25rem 0.75rem;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.cat-pill:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.cat-pill-active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .subsection-label {
   font-size: 0.78rem;
   font-weight: 700;

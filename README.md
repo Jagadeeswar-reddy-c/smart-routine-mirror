@@ -174,11 +174,11 @@ cp .env.example .env
 # Edit .env
 
 # Run from inside backend/ (modules use relative imports)
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uvicorn main:app --reload --host 0.0.0.0 --port 80
 ```
 
-- Dashboard: `http://localhost:8000`
-- Interactive API docs: `http://localhost:8000/docs`
+- Dashboard: `http://localhost`
+- Interactive API docs: `http://localhost/docs`
 - SQLite database (`smart_assistant.db`) is created automatically on first run.
 
 ### Reset the database
@@ -209,7 +209,7 @@ Open `http://localhost:8000` → redirects to `/login.html`.
 | Table | Purpose |
 |-------|---------|
 | `users` | Username, email, bcrypt password hash |
-| `user_settings` | One row per user — weather location, water interval (min) |
+| `user_settings` | One row per user — weather location, water interval, news category |
 | `schedule_items` | Schedule entries with `user_id` + `date` |
 | `user_quotes` | Personal quotes shown on the greeting display |
 | `device_tokens` | Permanent per-user ESP32 API key (`X-Device-Token`) |
@@ -273,7 +273,8 @@ The IoT login endpoint uses `device_secret` in the POST body (no JWT).
 | `GET`  | `/api/schedule` | Today's schedule |
 | `POST` | `/api/schedule` | Add item `{"time": "09:00", "task": "Meeting"}` |
 | `DELETE` | `/api/schedule/{id}` | Delete a schedule item |
-| `GET`  | `/api/news` | Latest 5 headlines |
+| `GET`  | `/api/news` | Latest 5 headlines for the user's chosen category |
+| `POST` | `/api/news/category` | Set preferred category `{"category": "technology"}` |
 | `GET`  | `/api/quotes` | List personal quotes |
 | `POST` | `/api/quotes` | Add a quote `{"text": "...", "sort_order": 0}` |
 | `PUT`  | `/api/quotes/{id}` | Update a quote |
@@ -311,7 +312,8 @@ Body: { "fingerprint_id": 1, "device_secret": "abc123..." }
                 "humidity": 65, "wind_speed": 12 },
   "schedule": { "date": "2026-06-27",
                 "items": [{ "id": 5, "time": "09:00", "task": "Stand-up" }] },
-  "news":     { "headlines": ["Headline one", "Headline two", "Headline three"] },
+  "news":     { "headlines": ["Headline one", "Headline two", "Headline three"],
+               "category": "technology" },
   "quotes":   ["Quote one", "Quote two"],
   "settings": { "water_interval_min": 60 },
   "timestamp": "2026-06-27T07:30:00"
@@ -322,6 +324,44 @@ Body: { "fingerprint_id": 1, "device_secret": "abc123..." }
 ```json
 { "success": false, "message": "Fingerprint slot 1 not registered on this device." }
 ```
+
+---
+
+## News Categories
+
+Each user independently chooses their preferred news category. The setting is saved to their profile and applied on every `/api/news` and `/api/dashboard-data` call.
+
+### Available categories
+
+| Category value | What you get |
+|----------------|-------------|
+| `general` | Top headlines across all topics (default) |
+| `technology` | Tech, gadgets, AI, software |
+| `business` | Stocks, finance, markets, economy |
+| `sports` | Football, basketball, F1, Olympics, etc. |
+| `health` | Medicine, fitness, nutrition, mental health |
+| `science` | Research, space, environment |
+| `entertainment` | Film, music, celebrities, TV |
+| `weather` | Weather-related articles (keyword search) |
+
+### How to change category
+
+**Web dashboard:** In the News card, click any category pill — it saves instantly and reloads headlines.
+
+**API directly:**
+```bash
+curl -X POST http://YOUR_SERVER/api/news/category \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"category": "technology"}'
+```
+
+### How it works internally
+
+- Categories `general` → `entertainment` call `GET /v2/top-headlines?category=…&language=en`
+- Category `weather` calls `GET /v2/everything?q=weather&language=en&sortBy=publishedAt`
+- Falls back to 5 mock headlines if `NEWS_API_KEY` is absent or the API call fails
+- The response always includes a `"category"` field so the dashboard can highlight the active pill
 
 ---
 
@@ -358,7 +398,7 @@ Edit the constants at the top of `esp32/multidisplay.ino`:
 ```cpp
 const char* WIFI_SSID     = "YourSSID";        // 2.4 GHz only
 const char* WIFI_PASSWORD = "YourPassword";
-const char* SERVER_URL    = "http://YOUR_SERVER_IP:8000";
+const char* SERVER_URL    = "http://YOUR_SERVER_IP";
 const int   DEVICE_ID     = 1;                 // from Devices page
 const char* DEVICE_SECRET = "paste_device_secret_here";
 const char* DEVICE_TOKEN  = "paste_64char_token_here"; // Dashboard → ESP32 Device Key
@@ -466,26 +506,27 @@ finger.storeModel(n)   →   Save matched template to slot n
 ```bash
 # Start the backend
 cd backend && source venv/bin/activate
-uvicorn main:app --host 0.0.0.0 --port 8000
+uvicorn main:app --host 0.0.0.0 --port 80
 ```
 
-1. Open `http://YOUR_SERVER_IP:8000` → register an account → sign in.
+1. Open `http://YOUR_SERVER_IP` → register an account → sign in.
 2. Set your weather location on the dashboard.
 3. Add schedule items and personal quotes.
-4. Go to **Devices** → register a device → copy Device ID and Device Secret.
-5. Add family members by email (they each need an account).
-6. Wire up the hardware per [esp32/README_multidisplay.md](esp32/README_multidisplay.md).
-7. Fill in the 5 constants in `multidisplay.ino` → flash.
-8. On the mirror: select your profile → enroll finger when prompted.
-9. Back on the Devices page: link the slot number to your user account.
-10. Place finger again → personalised briefing appears across all 4 screens.
+4. In the **News** card, click a category pill (e.g. Technology or Business) — live headlines load immediately.
+5. Go to **Devices** → register a device → copy Device ID and Device Secret.
+6. Add family members by email (they each need an account; each picks their own news category).
+7. Wire up the hardware per [esp32/README_multidisplay.md](esp32/README_multidisplay.md).
+8. Fill in the 5 constants in `multidisplay.ino` → flash.
+9. On the mirror: select your profile → enroll finger when prompted.
+10. Back on the Devices page: link the slot number to your user account.
+11. Place finger again → personalised briefing (weather, schedule, your news category, quotes) appears across all 4 screens.
 
 ---
 
 ## Future Extensions
 
 - Google Calendar / CalDAV integration for automatic schedule sync
-- News preferences per user (category, country)
+- Per-user news country filter (currently English only)
 - E-ink display output for always-on mirror panel
 - Smart mirror enclosure with a two-way mirror panel
 - OTA (Over-the-Air) firmware updates for the ESP32

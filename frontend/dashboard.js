@@ -129,6 +129,31 @@ function renderNews(n) {
           <span>${esc(h)}</span>
         </li>`).join("")}
     </ul>`;
+  if (n.category) setActiveCategoryPill(n.category);
+}
+
+function setActiveCategoryPill(category) {
+  document.querySelectorAll(".cat-pill").forEach(btn => {
+    btn.classList.toggle("cat-pill-active", btn.dataset.cat === category);
+  });
+}
+
+async function selectNewsCategory(category) {
+  setActiveCategoryPill(category);
+  try {
+    const resp = await apiCall(`${API_BASE}/api/news/category`, {
+      method: "POST",
+      body: JSON.stringify({ category }),
+    });
+    if (!resp || !resp.ok) return;
+    // Refresh only the news section
+    const newsResp = await apiCall(`${API_BASE}/api/news`);
+    if (!newsResp || !newsResp.ok) return;
+    renderNews(await newsResp.json());
+    setStatus(`News category set to ${category}.`);
+  } catch (err) {
+    setStatus("⚠ Failed to update news category.", true);
+  }
 }
 
 // ── Actions ───────────────────────────────────────────────────────────────────
@@ -355,3 +380,8 @@ loadDeviceToken();
 loadQuotes();
 loadDisplaySettings();
 setInterval(refreshAll, 5 * 60 * 1000);   // auto-refresh every 5 minutes
+
+// Wire up news category pills
+document.querySelectorAll(".cat-pill").forEach(btn => {
+  btn.addEventListener("click", () => selectNewsCategory(btn.dataset.cat));
+});

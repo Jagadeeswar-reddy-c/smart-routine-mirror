@@ -77,6 +77,10 @@ class MultidisplaySettingsIn(BaseModel):
     water_interval_min: int = 60
 
 
+class NewsCategoryRequest(BaseModel):
+    category: str   # general|technology|business|sports|health|science|entertainment|weather
+
+
 # ── Single-user device token (unchanged) ──────────────────────────────────────
 
 class DeviceTokenOut(BaseModel):

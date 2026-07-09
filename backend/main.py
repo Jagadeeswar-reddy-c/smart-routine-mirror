@@ -39,6 +39,21 @@ from device_routes import router as device_router
 # Create all tables on startup if they don't exist yet
 models.Base.metadata.create_all(bind=engine)
 
+# Add new columns to existing tables without dropping the database
+def _migrate():
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        for col, definition in [
+            ("news_category", "VARCHAR(20) DEFAULT 'general'"),
+        ]:
+            try:
+                conn.execute(text(f"ALTER TABLE user_settings ADD COLUMN {col} {definition}"))
+                conn.commit()
+            except Exception:
+                pass   # column already exists
+
+_migrate()
+
 app = FastAPI(title="Smart Morning Assistant")
 
 # Multi-user device extension (device_routes.py)
@@ -345,18 +360,50 @@ async def delete_schedule_item(
 
 # ── News ───────────────────────────────────────────────────────────────────────
 
+VALID_CATEGORIES = {
+    "general", "technology", "business", "sports",
+    "health", "science", "entertainment", "weather",
+}
+
+
 @app.get("/api/news")
-async def get_news(current_user: models.User = Depends(get_current_user)):
-    """Return the latest headlines. News is shared across all users."""
+async def get_news(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return headlines filtered by the user's chosen news category."""
+    settings = get_or_create_settings(current_user, db)
+    category = (settings.news_category or "general").lower()
+    if category not in VALID_CATEGORIES:
+        category = "general"
+
     if not NEWS_API_KEY:
         return mock_news()
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                "https://newsapi.org/v2/top-headlines",
-                params={"language": "en", "pageSize": 5, "apiKey": NEWS_API_KEY},
-            )
+            if category == "weather":
+                # NewsAPI has no weather category — use keyword search instead
+                resp = await client.get(
+                    "https://newsapi.org/v2/everything",
+                    params={
+                        "q": "weather",
+                        "language": "en",
+                        "sortBy": "publishedAt",
+                        "pageSize": 5,
+                        "apiKey": NEWS_API_KEY,
+                    },
+                )
+            else:
+                resp = await client.get(
+                    "https://newsapi.org/v2/top-headlines",
+                    params={
+                        "category": category,
+                        "language": "en",
+                        "pageSize": 5,
+                        "apiKey": NEWS_API_KEY,
+                    },
+                )
     except httpx.HTTPError:
         return mock_news()
 
@@ -365,7 +412,24 @@ async def get_news(current_user: models.User = Depends(get_current_user)):
 
     articles = resp.json().get("articles", [])
     headlines = [a["title"] for a in articles[:5] if a.get("title")]
-    return {"headlines": headlines}
+    return {"headlines": headlines, "category": category}
+
+
+@app.post("/api/news/category")
+async def set_news_category(
+    req: schemas.NewsCategoryRequest,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Save the user's preferred news category."""
+    cat = req.category.lower()
+    if cat not in VALID_CATEGORIES:
+        raise HTTPException(status_code=400, detail=f"Invalid category. Choose from: {', '.join(sorted(VALID_CATEGORIES))}")
+    settings = get_or_create_settings(current_user, db)
+    settings.news_category = cat
+    settings.updated_at = datetime.utcnow()
+    db.commit()
+    return {"category": cat}
 
 
 # ── Dashboard — aggregated endpoint for web frontend and ESP32 ─────────────────
@@ -384,7 +448,7 @@ async def get_dashboard_data(
     """
     weather  = await get_weather(current_user=current_user, db=db)
     schedule = await get_schedule(current_user=current_user, db=db)
-    news     = await get_news(current_user=current_user)
+    news     = await get_news(current_user=current_user, db=db)
     return {
         "user":      {"id": current_user.id, "username": current_user.username},
         "weather":   weather,
@@ -524,7 +588,7 @@ async def get_multidisplay_data(
     """
     weather  = await get_weather(current_user=current_user, db=db)
     schedule = await get_schedule(current_user=current_user, db=db)
-    news     = await get_news(current_user=current_user)
+    news     = await get_news(current_user=current_user, db=db)
     settings = get_or_create_settings(current_user, db)
 
     quotes = (

@@ -55,7 +55,8 @@ class UserSettings(Base):
     id                 = Column(Integer, primary_key=True, index=True)
     user_id            = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
     weather_location   = Column(String(100), default="Saarbrücken")
-    water_interval_min = Column(Integer, default=60)   # multidisplay water-reminder cadence
+    water_interval_min = Column(Integer, default=60)
+    news_category      = Column(String(20), default="general")   # general|technology|business|sports|health|science|entertainment|weather
     created_at         = Column(DateTime, default=datetime.utcnow)
     updated_at         = Column(DateTime, default=datetime.utcnow)
 
