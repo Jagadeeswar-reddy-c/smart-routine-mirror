@@ -92,10 +92,9 @@ char profileName[NUM_PROFILES][20] = {"Alice", "Bob", "Charlie"};
 HardwareSerial ioSerial(2);
 
 // Byte sent TO ESP8266 — output bitmask:
-#define IO_OUT_BUZZ    0x01   // bit0 — buzzer
-#define IO_OUT_RED     0x02   // bit1 — red LED   (storm)
-#define IO_OUT_YELLOW  0x04   // bit2 — yellow LED (sun/wind/storm)
-#define IO_OUT_BLUE    0x08   // bit3 — blue LED   (rain/cloud/snow/storm)
+#define IO_OUT_RED     0x01   // bit0 — red LED   (storm)
+#define IO_OUT_YELLOW  0x02   // bit1 — yellow LED (sun/wind/storm)
+#define IO_OUT_BLUE    0x04   // bit2 — blue LED   (rain/cloud/snow/storm)
 
 // Byte received FROM ESP8266 — button bitmask:
 #define IO_BTN_DISP0  0x01
@@ -127,20 +126,17 @@ void ioWrite(uint8_t mask) {
 }
 
 void ioBuzz(uint16_t durationMs) {
-  uint8_t restore = ioOutputState;
-  ioWrite(restore | IO_OUT_BUZZ);
-  delay(durationMs);
-  ioWrite(restore);
+  (void)durationMs;  // buzzer removed
 }
 
-#define PRESENCE_CM      2
+#define PRESENCE_CM      1
 #define SLEEP_MS       60000UL
 #define DATA_REFRESH_MS 60000UL
 #define WATER_SHOW_MS    6000UL
 #define GREET_REFRESH_MS 10000UL
 #define SCHED_REFRESH_MS 15000UL
 #define NEWS_ROTATE_MS    5000UL
-#define MOTION_CHECK_MS   500UL
+#define MOTION_CHECK_MS  5000UL
 #define FP_SCAN_TIMEOUT 20000UL
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -302,8 +298,7 @@ void refreshInversion() {
 void updateWeatherLED() {
   bool on = dataReady && displaysAwake && (currentMode == MODE_NORMAL);
   uint8_t icon = on ? condToIcon(dynCondition) : 255;
-  // Preserve buzzer bit; rebuild all LED bits from current weather icon
-  uint8_t iom = ioOutputState & IO_OUT_BUZZ;
+  uint8_t iom = 0;
   if (on && (icon==0||icon==1||icon==4||icon==6)) iom |= IO_OUT_YELLOW;
   if (on && (icon==2||icon==3||icon==4||icon==5)) iom |= IO_OUT_BLUE;
   if (on && icon==4)                              iom |= IO_OUT_RED;
@@ -852,6 +847,19 @@ void setup() {
   pinMode(TRIG_PIN, OUTPUT); digitalWrite(TRIG_PIN, LOW);
   pinMode(ECHO_PIN, INPUT);
 
+  // HC-SR04 connection check — 3 pulses; any echo means sensor is wired up
+  {
+    bool sonarOk = false;
+    for (uint8_t i = 0; i < 3 && !sonarOk; i++) {
+      digitalWrite(TRIG_PIN, LOW);  delayMicroseconds(2);
+      digitalWrite(TRIG_PIN, HIGH); delayMicroseconds(10);
+      digitalWrite(TRIG_PIN, LOW);
+      if (pulseIn(ECHO_PIN, HIGH, 30000UL) > 0) sonarOk = true;
+      delay(60);
+    }
+    Serial.println(sonarOk ? F("HC-SR04 OK") : F("HC-SR04 not detected — check TRIG=D10(GPIO9), ECHO=D7(GPIO44)"));
+  }
+
   lastPresenceMs = millis();
   clockRefMs     = millis();
 
@@ -910,19 +918,6 @@ void setup() {
 
 void loop() {
   uint32_t now = millis();
-
-  // ── Motion / presence ──────────────────────────────────────────────────
-  if (now - lastMotionCheck >= MOTION_CHECK_MS) {
-    lastMotionCheck = now;
-    float dist = getDistance();
-    if (dist < PRESENCE_CM) {
-      lastPresenceMs = now;
-      if (!displaysAwake) displaysOn();
-    } else if (displaysAwake && (now - lastPresenceMs >= SLEEP_MS)) {
-      displaysOff();
-    }
-  }
-  if (!displaysAwake) { delay(50); return; }
 
   // ── Buttons ────────────────────────────────────────────────────────────
   bool selNow  = (digitalRead(BTN_SEL)  == LOW);
@@ -1022,10 +1017,8 @@ void loop() {
     delay(50); return;
   }
 
-  // ── MODE: Normal dashboard  (identical to original) ────────────────────
+  // ── MODE: Normal dashboard ─────────────────────────────────────────────
   if (currentMode == MODE_NORMAL) {
-    lastPresenceMs = now;
-
     // Periodic refresh — same user's token
     if (WiFi.status() == WL_CONNECTED && (now - lastDataFetch >= DATA_REFRESH_MS)) {
       if (fetchDisplayData(PROFILE_TOKEN[activeProfile])) {

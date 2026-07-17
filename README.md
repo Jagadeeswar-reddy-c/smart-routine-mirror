@@ -32,19 +32,18 @@ The device sits beside a mirror or on a bedside table. Each morning a family mem
 ┌─────────────────────────────────────────────────────────────┐
 │               XIAO ESP32-S3 Smart Mirror                    │
 │                                                             │
-│  ┌──────────────┐  UART1   ┌─────────────────────────┐     │
-│  │ Fingerprint  │◄────────►│     XIAO ESP32-S3        │     │
-│  │ Sensor       │ D6/D7    │  Wi-Fi · JSON · buttons  │     │
-│  │ (AS608/R307) │ GPIO43/44│  ArduinoJson             │     │
-│  └──────────────┘          └────────────┬────────────┘     │
-│                                         │ I2C (D4/D5)      │
-│                                  ┌──────▼──────┐           │
-│                                  │  TCA9548A   │           │
-│                                  │ multiplexer │           │
-│                                  └──────┬──────┘           │
-│                     ┌──────┬──────┬─────┴────┐             │
-│                 OLED 0  OLED 1  OLED 2  OLED 3             │
-│                Greeting Weather  News  Schedule             │
+│  ┌──────────────┐  UART1    ┌────────────────────────┐     │
+│  │ Fingerprint  │◄─────────►│    XIAO ESP32-S3        │     │
+│  │ (AS608/R307) │ D6/D9     │  Wi-Fi · JSON · OLED   │     │
+│  └──────────────┘ GPIO43/8  └──┬────────────┬────────┘     │
+│                                │ I2C D4/D5  │ UART2 D3/D8  │
+│                         ┌──────▼──────┐  ┌──▼───────────┐  │
+│                         │  TCA9548A   │  │ ESP8266 Mini │  │
+│                         │ I2C mux     │  │ LEDs·Buttons │  │
+│                         └──────┬──────┘  │ Buzzer       │  │
+│           ┌──────┬──────┬──────┴─┐       └──────────────┘  │
+│        OLED 0  OLED 1  OLED 2  OLED 3                       │
+│       Greeting Weather  News  Schedule                       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -85,7 +84,8 @@ smart-routine-mirror/
 │   ├── devices.js           # Device registration, members, fingerprint mappings
 │   └── style.css            # Shared dark-theme styles
 ├── esp32/
-│   ├── multidisplay.ino         # Main sketch — 4 OLEDs + fingerprint + Wi-Fi
+│   ├── multidisplay.ino         # Main sketch — 4 OLEDs + fingerprint + Wi-Fi + ESP8266
+│   ├── esp8266_io_slave.ino     # ESP8266 UART peripheral — LEDs, buzzer, display buttons
 │   ├── README_multidisplay.md   # Full pin-to-pin wiring for all hardware
 │   ├── fingerprint_enroll.ino   # Standalone enrollment utility (optional)
 │   └── Testing/
@@ -118,37 +118,55 @@ D8  GPIO7   D9  GPIO8   D10 GPIO9
 | Qty | Part | Purpose |
 |-----|------|---------|
 | 1 | XIAO ESP32-S3 (Seeed Studio) | Main MCU + Wi-Fi |
+| 1 | ESP8266 D1 Mini | I/O expander — LEDs, buzzer, display-select buttons |
 | 1 | WCMCU-9548 / TCA9548A | I2C multiplexer for 4 OLEDs |
 | 4 | SSD1306 OLED 128×64 (I2C, 3.3 V) | 4 display panels |
-| 1 | Adafruit Fingerprint Sensor AS608 / R307 | Per-user biometric ID |
+| 1 | AS608 / R307 fingerprint sensor (3.3 V UART) | Per-user biometric ID |
 | 1 | HC-SR04 ultrasonic distance sensor | Auto-sleep / presence detection |
-| 2 | LEDs — 1× yellow, 1× blue | Weather mood indicator |
-| 2 | 220 Ω resistors | LED current limiting |
-| 3 | Momentary push-buttons | Profile scroll + confirm |
+| 3 | LEDs — 1× red, 1× yellow, 1× blue | Weather mood indicator |
+| 3 | 220 Ω resistors | LED current limiting |
+| 7 | Momentary push-buttons | 3 on ESP32-S3 (profile nav) + 4 on ESP8266 (display select) |
 | — | Dupont wires, breadboard | Connections |
 
 ---
 
-## Pin Allocation — XIAO ESP32-S3
+## Pin Allocation
 
-All 11 header pins are used. No pin is wasted, none overlap.
+### XIAO ESP32-S3
 
 | XIAO | GPIO | Connected to |
 |------|------|--------------|
 | D0 | GPIO1 | BTN_NEXT — scroll up / prev |
 | D1 | GPIO2 | BTN_DONE — scroll down / next |
 | D2 | GPIO3 | BTN_SEL — confirm (hold 3 s = switch profile) |
-| D3 | GPIO4 | LED Yellow — 220 Ω in series |
+| D3 | GPIO4 | UART2 TX → ESP8266 D1 (GPIO5) |
 | D4 | GPIO5 | SDA — TCA9548A → 4× OLEDs |
 | D5 | GPIO6 | SCL — TCA9548A → 4× OLEDs |
 | D6 | GPIO43 | Fingerprint TX (ESP32 → sensor RX) |
-| D7 | GPIO44 | Fingerprint RX (sensor TX → ESP32) |
-| D8 | GPIO7 | LED Blue — 220 Ω in series |
-| D9 | GPIO8 | HC-SR04 ECHO (via 1kΩ+2kΩ voltage divider) |
+| D7 | GPIO44 | HC-SR04 ECHO (direct, no divider) |
+| D8 | GPIO7 | UART2 RX ← ESP8266 D2 (GPIO4) |
+| D9 | GPIO8 | Fingerprint RX (sensor TX → ESP32) |
 | D10 | GPIO9 | HC-SR04 TRIG |
-| 3V3 | — | TCA9548A, all 4 OLEDs, fingerprint sensor |
+| 3V3 | — | TCA9548A, OLEDs, fingerprint sensor |
 | 5V | — | HC-SR04 VCC |
 | GND | — | All components |
+
+### ESP8266 D1 Mini
+
+| D1 Mini | GPIO | Connected to |
+|---------|------|--------------|
+| D1 | GPIO5 | UART RX ← ESP32-S3 D3 (GPIO4) |
+| D2 | GPIO4 | UART TX → ESP32-S3 D8 (GPIO7) |
+| D0 | GPIO16 | LED RED — 220 Ω → GND (storm) |
+| D3 | GPIO0 | LED YELLOW — 220 Ω → GND (sun/wind/storm) |
+| D4 | GPIO2 | LED BLUE — 220 Ω → GND (rain/cloud/snow/storm) |
+| D5 | GPIO14 | BTN_DISP0 → GND (jump to Greeting display) |
+| D6 | GPIO12 | BTN_DISP1 → GND (jump to Weather display) |
+| D7 | GPIO13 | BTN_DISP2 → GND (jump to News display) |
+| RX | GPIO3 | BTN_DISP3 → GND (jump to Schedule display) |
+| D8 | GPIO15 | — (free; boot-strapping pin) |
+| 5V | — | USB power |
+| GND | — | Common GND |
 
 > Full pin-to-pin wiring with ASCII diagrams: see [esp32/README_multidisplay.md](esp32/README_multidisplay.md).
 
@@ -193,7 +211,7 @@ rm backend/smart_assistant.db
 ## Frontend
 
 Served directly by the FastAPI backend — no separate server needed.
-Open `http://localhost:8000` → redirects to `/login.html`.
+Open `http://localhost` → redirects to `/login.html`.
 
 ### User flow
 
@@ -387,6 +405,14 @@ https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32
 - **Adafruit GFX Library** (Adafruit)
 - **ArduinoJson** (Benoit Blanchon — v6 or v7)
 
+**5. For the ESP8266 sketch** — install ESP8266 board support first:
+`File → Preferences → Additional Board Manager URLs`, add:
+```
+http://arduino.esp8266.com/stable/package_esp8266com_index.json
+```
+Then `Tools → Board → Boards Manager` → search `esp8266` → install **esp8266 by ESP8266 Community**.
+Select board: `LOLIN(WEMOS) D1 Mini`. The `SoftwareSerial` library is built-in — no extra install needed.
+
 **5. Connect and flash**
 Plug in via USB-C. `Tools → Port` → select the port that appears.
 If no port appears: hold **BOOT**, tap **RESET**, release BOOT (enters download mode).
@@ -399,24 +425,34 @@ Edit the constants at the top of `esp32/multidisplay.ino`:
 const char* WIFI_SSID     = "YourSSID";        // 2.4 GHz only
 const char* WIFI_PASSWORD = "YourPassword";
 const char* SERVER_URL    = "http://YOUR_SERVER_IP";
-const int   DEVICE_ID     = 1;                 // from Devices page
-const char* DEVICE_SECRET = "paste_device_secret_here";
-const char* DEVICE_TOKEN  = "paste_64char_token_here"; // Dashboard → ESP32 Device Key
 ```
+
+And the per-profile tokens and fingerprint slots:
+
+```cpp
+const char* PROFILE_TOKEN[3] = { "token1", "token2", "token3" };
+const uint8_t FP_SLOT[3]     = { 1, 2, 3 };
+```
+
+### Flashing order
+
+Flash the **ESP8266 first**, then the **ESP32-S3**.
+
+On ESP8266 power-up you should see the self-test: yellow → blue → red LEDs cycle. This confirms the sketch is running correctly.
 
 ### Fingerprint sensor — XIAO ESP32-S3 wiring
 
 > ⚠ Generic guides often show **GPIO17 / GPIO18** for fingerprint UART.
 > Those pins do **not exist** on the XIAO ESP32-S3.
-> Use **D6 (GPIO43)** and **D7 (GPIO44)** instead.
+> Use **D6 (GPIO43)** for TX and **D9 (GPIO8)** for RX.
 
 ```
 XIAO ESP32-S3                       Fingerprint Sensor
 ─────────────                       ──────────────────
-3V3  ────────────────────────────► VCC  (Red wire)
-GND  ────────────────────────────► GND  (Black wire)
-D6 / GPIO43  (UART1 TX) ─────────► RX   (White wire)
-D7 / GPIO44  (UART1 RX) ◄─────────  TX   (Yellow wire)
+3V3  ────────────────────────────► VCC
+GND  ────────────────────────────► GND
+D6 / GPIO43  (UART1 TX) ─────────► RX
+D9 / GPIO8   (UART1 RX) ◄─────────  TX
 ```
 
 Cross the TX/RX — sensor TX → ESP32 RX, sensor RX → ESP32 TX.
@@ -486,17 +522,17 @@ finger.storeModel(n)   →   Save matched template to slot n
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Fingerprint sensor not detected | TX/RX swapped or wrong pins | On XIAO: use D6 (GPIO43) TX, D7 (GPIO44) RX — crossed to sensor |
-| `API error -1` at boot | `SERVER_URL` is a placeholder | Set your server's actual LAN IP |
+| Fingerprint sensor not detected | TX/RX swapped or wrong pins | sensor TX→D9(GPIO8), sensor RX→D6(GPIO43) — crossed |
+| `API error -1` at boot | `SERVER_URL` is a placeholder | Set your server's actual IP/domain |
 | `API error 401` | Wrong device secret or token | Re-copy from Dashboard → Devices page |
-| `API error 404` | Wrong device ID | Check the integer on the Devices page |
 | No Wi-Fi | Wrong SSID/password or 5 GHz network | ESP32 supports **2.4 GHz only** |
-| OLEDs blank | VCC too high or wrong I2C pins | 3.3 V only; SDA=D4, SCL=D5 |
+| OLEDs blank | Wrong I2C pins | SDA=D4(GPIO5), SCL=D5(GPIO6), VCC=3.3 V |
 | TCA9548A not found | A0/A1/A2 not tied to GND | All three address pins → GND (address 0x70) |
-| No sleep / ECHO always 0 | TRIG/ECHO swapped or missing voltage divider | 5 V sensor needs 1kΩ+2kΩ divider on ECHO |
-| LEDs never light | Data not fetched yet | Wait for first successful API response |
+| LEDs / buttons not working | UART wires wrong or no common GND | D3→ESP8266 D1, D8←ESP8266 D2, GND shared |
+| LEDs all on at boot | Crash loop on ESP8266 | Reflash ESP8266; check D3/D4 wiring (GPIO0/GPIO2) |
+| No sleep / ECHO always 0 | TRIG/ECHO swapped | TRIG=D10(GPIO9), ECHO=D7(GPIO44) |
 | Port not in Arduino IDE | USB driver or charge-only cable | Install CP2102/CH340 driver; try a data cable |
-| Upload fails / timeout | ESP32 not in download mode | Hold BOOT, tap RESET, release BOOT before Upload |
+| Upload fails / timeout | Board not in download mode | Hold BOOT, tap RESET, release BOOT before Upload |
 | Low fingerprint confidence (<30) | Dirty sensor or dry finger | Clean glass; breathe lightly on fingertip first |
 
 ---

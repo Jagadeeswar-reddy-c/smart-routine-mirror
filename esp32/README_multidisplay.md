@@ -1,8 +1,9 @@
 # Smart Display Mirror — 4-Display Wi-Fi + Fingerprint Edition
 
 `multidisplay.ino` drives four SSD1306 OLED displays via a TCA9548A I2C
-multiplexer, with an Adafruit fingerprint sensor for 3-profile login,
-2 weather-mood LEDs, and an HC-SR04 proximity sensor for auto-sleep.
+multiplexer, with fingerprint login for 3 user profiles, weather-mood LEDs,
+a buzzer, and an HC-SR04 proximity sensor for auto-sleep.
+An ESP8266 D1 Mini acts as a UART I/O expander for extra buttons and LEDs.
 All content is fetched live from the Smart Morning Assistant backend per user.
 
 ---
@@ -12,313 +13,354 @@ All content is fetched live from the Smart Morning Assistant backend per user.
 | Qty | Part |
 |-----|------|
 | 1 | XIAO ESP32-S3 (Seeed Studio) |
+| 1 | ESP8266 D1 Mini |
 | 1 | WCMCU-9548 / TCA9548A I2C multiplexer |
 | 4 | SSD1306 OLED 128×64 (I2C, 3.3 V) |
-| 1 | Adafruit Fingerprint Sensor (AS608 / R307, 3.3 V UART) |
+| 1 | AS608 / R307 fingerprint sensor (3.3 V UART) |
 | 1 | HC-SR04 ultrasonic distance sensor |
-| 2 | LEDs — 1× yellow, 1× blue |
-| 2 | 220 Ω resistors (one per LED) |
-| 3 | Momentary push-buttons |
+| 3 | LEDs — 1× red, 1× yellow, 1× blue |
+| 3 | 220 Ω resistors (one per LED) |
+| 7 | Momentary push-buttons |
 | — | Dupont wires, breadboard |
 
 ---
 
-## XIAO ESP32-S3 — complete pin allocation
+## XIAO ESP32-S3 — pin allocation
 
-All 11 accessible header pins (D0–D10) are used.
-GPIO17 and GPIO18 do **not** exist on this board — they are not exposed.
+| XIAO | GPIO | Function | Connected to |
+|------|------|----------|--------------|
+| D0 | GPIO1 | BTN_NEXT | button → GND |
+| D1 | GPIO2 | BTN_DONE | button → GND |
+| D2 | GPIO3 | BTN_SEL | button → GND |
+| D3 | GPIO4 | UART2 TX | ESP8266 D1 (GPIO5) |
+| D4 | GPIO5 | SDA (I2C) | TCA9548A SDA |
+| D5 | GPIO6 | SCL (I2C) | TCA9548A SCL |
+| D6 | GPIO43 | UART1 TX | Fingerprint sensor RX |
+| D7 | GPIO44 | ECHO | HC-SR04 ECHO (direct) |
+| D8 | GPIO7 | UART2 RX | ESP8266 D2 (GPIO4) |
+| D9 | GPIO8 | UART1 RX | Fingerprint sensor TX |
+| D10 | GPIO9 | TRIG | HC-SR04 TRIG |
+| 3V3 | — | Power | TCA9548A, OLEDs, fingerprint sensor |
+| 5V | — | Power | HC-SR04 VCC |
+| GND | — | Ground | All components |
 
-| XIAO Pin | GPIO   | Function     | Connected to |
-|----------|--------|--------------|--------------|
-| D0       | GPIO1  | Digital I/O  | BTN_NEXT (scroll up / prev) |
-| D1       | GPIO2  | Digital I/O  | BTN_DONE (scroll down / next) |
-| D2       | GPIO3  | Digital I/O  | BTN_SEL (confirm / cycle display) |
-| D3       | GPIO4  | Digital I/O  | LED Yellow (220 Ω → anode) |
-| D4       | GPIO5  | SDA (I2C)    | TCA9548A SDA |
-| D5       | GPIO6  | SCL (I2C)    | TCA9548A SCL |
-| D6       | GPIO43 | UART1 TX     | Fingerprint sensor RX |
-| D7       | GPIO44 | UART1 RX     | Fingerprint sensor TX |
-| D8       | GPIO7  | Digital I/O  | LED Blue (220 Ω → anode) |
-| D9       | GPIO8  | Digital I/O  | HC-SR04 ECHO |
-| D10      | GPIO9  | Digital I/O  | HC-SR04 TRIG |
-| 3V3      | —      | Power output | TCA9548A VIN, all OLEDs, Fingerprint VCC |
-| 5V       | —      | Power output | HC-SR04 VCC |
-| GND      | —      | Ground       | All components |
+---
+
+## ESP8266 D1 Mini — pin allocation
+
+| D1 Mini | GPIO | Function | Connected to |
+|---------|------|----------|--------------|
+| D1 | GPIO5 | UART RX | ESP32-S3 D3 (GPIO4) — TX |
+| D2 | GPIO4 | UART TX | ESP32-S3 D8 (GPIO7) — RX |
+| D0 | GPIO16 | LED RED | 220 Ω → LED → GND |
+| D3 | GPIO0 | LED YELLOW | 220 Ω → LED → GND |
+| D4 | GPIO2 | LED BLUE | 220 Ω → LED → GND |
+| D5 | GPIO14 | BTN_DISP0 | button → GND |
+| D6 | GPIO12 | BTN_DISP1 | button → GND |
+| D7 | GPIO13 | BTN_DISP2 | button → GND |
+| RX | GPIO3 | BTN_DISP3 | button → GND |
+| D8 | GPIO15 | — | free (boot-strapping pin — keep LOW at power-on) |
+| 5V | — | Power | USB (power the board) |
+| GND | — | Ground | Common GND |
+
+> **GPIO0 (D3) and GPIO2 (D4)** are boot-sensitive — the sketch sets them LOW before `pinMode(OUTPUT)` to prevent the boot glitch.
+>
+> **GPIO15 (D8)** must be LOW at boot to boot from flash — leave it unconnected or tied to GND. Do not use it for buttons.
+>
+> **GPIO1 (TX)** is avoided for outputs — the ESP8266 bootloader sends UART data on it before `setup()` runs, which would drive connected hardware unexpectedly.
+
+---
+
+## UART link — ESP32-S3 ↔ ESP8266
+
+The ESP8266 runs as a UART peripheral (9600 baud). It is **not** on the I2C bus.
+
+```
+ESP32-S3 D3 (GPIO4)  TX ──────────────► RX  D1 (GPIO5)  ESP8266
+ESP32-S3 D8 (GPIO7)  RX ◄──────────────  TX  D2 (GPIO4)  ESP8266
+GND ─────────────────────────────────────────────────────── GND
+```
+
+**Protocol — 1 byte each direction:**
+
+| Direction | Content |
+|-----------|---------|
+| ESP32-S3 → ESP8266 | Output bitmask: bit0=LED RED, bit1=LED YELLOW, bit2=LED BLUE |
+| ESP8266 → ESP32-S3 | Button bitmask (every 50 ms): bit0=DISP0, bit1=DISP1, bit2=DISP2, bit3=DISP3 |
+
+---
+
+## I2C bus — ESP32-S3 and TCA9548A only
+
+The ESP8266 is **not** connected to the I2C bus.
+
+```
+ESP32-S3 D4 (GPIO5) SDA ──────────────► SDA  TCA9548A
+ESP32-S3 D5 (GPIO6) SCL ──────────────► SCL  TCA9548A
+```
 
 ---
 
 ## Wiring — section by section
 
-### 1 — XIAO ESP32-S3 → TCA9548A (WCMCU-9548)
-
-The WCMCU-9548 has a **VIN** pin (onboard regulator) — connect to **5V**.
-If your board has a **VCC** pin (no regulator) — connect to **3V3** instead.
+### 1 — XIAO ESP32-S3 → TCA9548A
 
 ```
-XIAO ESP32-S3           TCA9548A (WCMCU-9548)
-──────────────────      ─────────────────────
-5V   (or 3V3)      →    VIN  (or VCC)
-GND                →    GND
-D4   (GPIO5/SDA)   →    SDA
-D5   (GPIO6/SCL)   →    SCL
-GND                →    A0  ┐
-GND                →    A1  ├─ sets I2C address = 0x70
-GND                →    A2  ┘
+XIAO ESP32-S3           TCA9548A
+──────────────          ────────────────────
+3V3              →  VCC  (or VIN if board has regulator)
+GND              →  GND
+D4 (GPIO5/SDA)   →  SDA
+D5 (GPIO6/SCL)   →  SCL
+GND              →  A0 ┐
+GND              →  A1 ├─ I2C address = 0x70
+GND              →  A2 ┘
 ```
 
----
-
-### 2 — TCA9548A → 4× SSD1306 OLED displays
-
-Each display connects to one downstream I2C channel of the TCA9548A.
+### 2 — TCA9548A → 4× SSD1306 OLED
 
 ```
-TCA9548A Channel    OLED    Content shown
-────────────────    ──────  ──────────────────────────────
-SD0 / SC0       →   OLED 0  Greeting + clock + quotes
-SD1 / SC1       →   OLED 1  Weather (live temperature + icon)
-SD2 / SC2       →   OLED 2  News headlines (rotating)
-SD3 / SC3       →   OLED 3  Schedule / tasks + water reminder
+TCA9548A ch    OLED    Content
+─────────────  ──────  ──────────────────────
+SD0 / SC0  →  OLED 0  Greeting + clock + quotes
+SD1 / SC1  →  OLED 1  Weather
+SD2 / SC2  →  OLED 2  News headlines
+SD3 / SC3  →  OLED 3  Schedule + tasks
 ```
 
-Each OLED (×4):
+Each OLED: VCC → 3V3 · GND → GND · SDA → SDx · SCL → SCx
+
+### 3 — Fingerprint sensor (AS608 / R307)
+
+Cross TX/RX — sensor TX → ESP32 RX, sensor RX → ESP32 TX.
 
 ```
-OLED Pin    Connect to
-────────    ──────────────────────────────
-VCC     →   3V3
-GND     →   GND
-SDA     →   SDx  (TCA9548A matching channel)
-SCL     →   SCx  (TCA9548A matching channel)
+Fingerprint              XIAO ESP32-S3
+───────────              ─────────────────────
+VCC (3.3 V)     →   3V3
+GND             →   GND
+TX (sensor out) →   D9 / GPIO8  (UART1 RX)
+RX (sensor in)  →   D6 / GPIO43 (UART1 TX)
 ```
 
----
+> GPIO17/GPIO18 do **not exist** on the XIAO ESP32-S3. Never use them.
 
-### 3 — Buttons (3 total)
-
-One leg to the XIAO pin, other leg to GND. Uses internal pull-up — no resistor needed.
+### 4 — HC-SR04 ultrasonic sensor
 
 ```
-Button            XIAO Pin     GPIO    Role
-────────────────  ───────────  ──────  ──────────────────────────────────────
-BTN_SEL           D2           GPIO3   Confirm selection / cycle display
-                                       Hold 3 s in dashboard → switch profile
-BTN_NEXT          D0           GPIO1   Scroll up (profile) / prev / up-task
-BTN_DONE          D1           GPIO2   Scroll down (profile) / next / mark-done
+HC-SR04          XIAO ESP32-S3
+────────         ─────────────────────
+VCC         →   5V
+GND         →   GND
+TRIG        →   D10 / GPIO9
+ECHO        →   D7  / GPIO44  (direct — no voltage divider needed)
 ```
 
----
+The XIAO ESP32-S3 GPIO44 is 5V-tolerant on the ECHO signal. No divider required.
 
-### 4 — Adafruit Fingerprint Sensor (AS608 / R307)
+### 5 — Buttons on ESP32-S3 (3 total)
 
-> ⚠ **XIAO ESP32-S3 only — ignore any guide that says GPIO17 / GPIO18.**
-> Those pins appear on full-size ESP32-S3 Dev Boards but are **not exposed** on the XIAO.
-> The XIAO's dedicated UART pins are **D6 (GPIO43)** and **D7 (GPIO44)**.
-
-Uses hardware UART1 (GPIO43 = TX, GPIO44 = RX). Sensor runs at 3.3 V — no level shifting needed.
+One leg to pin, other leg to GND. Uses internal pull-up.
 
 ```
-Fingerprint Sensor    Wire colour    XIAO ESP32-S3
-──────────────────    ───────────    ─────────────────────────────────
-VCC  (3.3 V)          Red        →   3V3
-GND                   Black      →   GND
-TX   (sensor → ESP32) Yellow     →   D7 / GPIO44  (UART1 RX)
-RX   (ESP32 → sensor) White      →   D6 / GPIO43  (UART1 TX)
+BTN_SEL   →  D2 (GPIO3)  — confirm / hold 3 s to switch profile
+BTN_NEXT  →  D0 (GPIO1)  — scroll up / prev
+BTN_DONE  →  D1 (GPIO2)  — scroll down / next
 ```
 
-Cross the TX/RX lines — sensor TX → ESP32 RX, sensor RX → ESP32 TX.
+### 6 — Buttons on ESP8266 (4 total)
+
+All four use the internal pull-up — wire one leg to pin, other leg to GND. No external resistors needed.
 
 ```
-XIAO ESP32-S3                       Fingerprint Sensor
-─────────────                       ──────────────────
-3V3  ────────────────────────────► VCC
-GND  ────────────────────────────► GND
-D6 / GPIO43  (UART1 TX) ─────────► RX
-D7 / GPIO44  (UART1 RX) ◄─────────  TX
+BTN_DISP0  →  D5 (GPIO14)  — jump to display 0 (Greeting)
+BTN_DISP1  →  D6 (GPIO12)  — jump to display 1 (Weather)
+BTN_DISP2  →  D7 (GPIO13)  — jump to display 2 (News)
+BTN_DISP3  →  RX (GPIO3)   — jump to display 3 (Schedule)
 ```
 
----
-
-### 5 — Weather LEDs (2 total)
-
-Connect each LED anode (+, long leg) through a **220 Ω resistor** to the XIAO pin.
-Connect each LED cathode (−, short leg) to GND.
+### 7 — Weather LEDs on ESP8266
 
 ```
-XIAO Pin      GPIO    LED Colour    Lights up when…
-────────────  ──────  ────────────  ──────────────────────────────────
-D3            GPIO4   Yellow        Sunny / Partly cloudy / Windy
-D8            GPIO7   Blue          Cloudy / Rainy / Snowy
-Both D3+D8    —       Yellow + Blue Storm / Thunder (both on = alert)
+ESP8266 D0 (GPIO16) ──[220Ω]──► (+) RED LED    (−) → GND   storm/thunder
+ESP8266 D3 (GPIO0)  ──[220Ω]──► (+) YELLOW LED (−) → GND   sunny/wind/storm
+ESP8266 D4 (GPIO2)  ──[220Ω]──► (+) BLUE LED   (−) → GND   rain/cloud/snow/storm
 ```
 
-```
-D3 (GPIO4) ──[220Ω]──► (+) Yellow LED (−) ──┐
-D8 (GPIO7) ──[220Ω]──► (+) Blue   LED (−) ──┴── GND
-```
+LED logic (controlled by ESP32-S3 via UART byte):
 
-Both LEDs are off during profile/fingerprint screens and when the mirror sleeps.
-
----
-
-### 6 — HC-SR04 ultrasonic sensor (auto-sleep)
-
-> ⚠ Standard HC-SR04 runs on **5 V** and outputs 5 V on ECHO.
-> Protect the ESP32 with a voltage divider on the ECHO wire:
-> `HC-SR04 ECHO → 1kΩ → junction → 2kΩ → GND`  and `junction → D9`.
-> Skip this only if you have a 3.3 V-native SR04.
-
-```
-HC-SR04 Pin    Connect to
-─────────────  ──────────────────────────────────────────
-VCC        →   5V  (XIAO 5V pin)
-GND        →   GND
-TRIG       →   D10  (GPIO9)   — direct connection
-ECHO       →   D9   (GPIO8)   — via 1kΩ + 2kΩ voltage divider
-```
-
-**Behaviour:**
-- Object within **200 cm** → "present" → displays + LEDs stay on, timer resets
-- Nothing within 200 cm for **1 minute** → displays + LEDs turn off (sleep)
-- Motion or button press → instant wake-up, all displays redraw
+| Weather | Red | Yellow | Blue |
+|---------|-----|--------|------|
+| Sunny / clear | — | ON | — |
+| Windy | — | ON | — |
+| Cloudy | — | — | ON |
+| Rainy / snowy | — | — | ON |
+| Storm / thunder | ON | ON | ON |
+| No data / sleep | — | — | — |
 
 ---
 
 ## Full wiring diagram (ASCII)
 
 ```
-  ┌──────────────────────────────────────────────────────┐
-  │                  XIAO ESP32-S3                        │
-  │                                                       │
-  │  3V3 ─────────────────────────────────┐              │
-  │  5V  ──────────────────────────────┐  │              │
-  │  GND ───────────────────────────┐  │  │              │
-  │                                 │  │  │              │
-  │  D4 (GPIO5/SDA) ────────────────┼──┼──┼──┐          │
-  │  D5 (GPIO6/SCL) ────────────────┼──┼──┼──┤          │
-  │                                 │  │  │  │          │
-  │  D0 (GPIO1) ─── BTN_NEXT ─── GND  │  │  │          │
-  │  D1 (GPIO2) ─── BTN_DONE ─── GND  │  │  │          │
-  │  D2 (GPIO3) ─── BTN_SEL  ─── GND  │  │  │          │
-  │                                    │  │  │          │
-  │  D3 (GPIO4) ─[220Ω]─ Yellow LED+ ─┤  │  │          │
-  │  D8 (GPIO7) ─[220Ω]─ Blue   LED+ ─┼──┘  │          │
-  │                       LED cathodes→GND   │          │
-  │                                          │          │
-  │  D6 (GPIO43/TX) ────── Fingerprint RX   │          │
-  │  D7 (GPIO44/RX) ────── Fingerprint TX   │          │
-  │  3V3 ───────────────── Fingerprint VCC ─┤          │
-  │                                          │          │
-  │  D10 (GPIO9) ─── HC-SR04 TRIG           │          │
-  │  D9  (GPIO8) ─── [divider] ── ECHO      │          │
-  │  5V  ────────────────── HC-SR04 VCC ────┘          │
-  │                                                     │
-  └─────────────────────────┬───────────────────────────┘
-                            │  SDA + SCL
-              ┌─────────────▼────────────────────┐
-              │         TCA9548A                  │
-              │   VIN ◄── 5V (or 3V3 if VCC)     │
-              │   GND ◄── GND                     │
-              │   A0 / A1 / A2 ── GND (addr 0x70)│
-              │                                   │
-              │  SD0/SC0 ──► OLED 0  (Greeting)  │
-              │  SD1/SC1 ──► OLED 1  (Weather)   │
-              │  SD2/SC2 ──► OLED 2  (News)      │
-              │  SD3/SC3 ──► OLED 3  (Schedule)  │
-              └───────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                        XIAO ESP32-S3                            │
+│                                                                 │
+│  D0 (GPIO1)  ─── BTN_NEXT ──► GND                              │
+│  D1 (GPIO2)  ─── BTN_DONE ──► GND                              │
+│  D2 (GPIO3)  ─── BTN_SEL  ──► GND                              │
+│                                                                 │
+│  D3 (GPIO4)  ─── UART2 TX ──────────────────────► D1 ESP8266   │
+│  D8 (GPIO7)  ─── UART2 RX ◄─────────────────────  D2 ESP8266   │
+│                                                                 │
+│  D4 (GPIO5/SDA) ─────────────────────────────────► TCA SDA     │
+│  D5 (GPIO6/SCL) ─────────────────────────────────► TCA SCL     │
+│                                                                 │
+│  D6 (GPIO43/TX) ─────────────────────────────────► FP RX       │
+│  D9 (GPIO8 /RX) ◄─────────────────────────────────  FP TX      │
+│  3V3 ────────────────────────────────────────────► FP VCC      │
+│                                                                 │
+│  D10 (GPIO9)  ──── HC-SR04 TRIG                                 │
+│  D7  (GPIO44) ──── HC-SR04 ECHO  (direct, no divider)           │
+│  5V  ──────────── HC-SR04 VCC                                   │
+│                                                                 │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │ SDA + SCL
+            ┌───────────────▼──────────────────┐
+            │           TCA9548A                │
+            │  VCC/VIN ◄── 3V3                 │
+            │  A0/A1/A2 ── GND  (addr 0x70)    │
+            │  SD0/SC0 ──► OLED 0 (Greeting)   │
+            │  SD1/SC1 ──► OLED 1 (Weather)    │
+            │  SD2/SC2 ──► OLED 2 (News)       │
+            │  SD3/SC3 ──► OLED 3 (Schedule)   │
+            └──────────────────────────────────┘
 
-Each OLED: VCC→3V3, GND→GND, SDA→SDx, SCL→SCx
+┌─────────────────────────────────────────────────────────────────┐
+│                      ESP8266 D1 Mini                            │
+│                                                                 │
+│  D1 (GPIO5)  ── UART RX ◄── ESP32-S3 D3 (GPIO4)                │
+│  D2 (GPIO4)  ── UART TX ──► ESP32-S3 D8 (GPIO7)                │
+│                                                                 │
+│  D0 (GPIO16) ──[220Ω]──► RED LED    (−)► GND                   │
+│  D3 (GPIO0)  ──[220Ω]──► YELLOW LED (−)► GND                   │
+│  D4 (GPIO2)  ──[220Ω]──► BLUE LED   (−)► GND                   │
+│                                                                 │
+│  D5 (GPIO14) ─── BTN_DISP0 ──► GND                             │
+│  D6 (GPIO12) ─── BTN_DISP1 ──► GND                             │
+│  D7 (GPIO13) ─── BTN_DISP2 ──► GND                             │
+│  RX (GPIO3)  ─── BTN_DISP3 ──► GND                             │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## Libraries (Arduino IDE → Library Manager)
 
+**For ESP32-S3 (`multidisplay.ino`):**
+
 | Library | Author |
 |---------|--------|
-| **Adafruit GFX Library** | Adafruit |
-| **Adafruit SSD1306** | Adafruit |
-| **Adafruit Fingerprint Sensor Library** | Adafruit |
-| **ArduinoJson** | Benoit Blanchon (v6 or v7) |
+| Adafruit GFX Library | Adafruit |
+| Adafruit SSD1306 | Adafruit |
+| Adafruit Fingerprint Sensor Library | Adafruit |
+| ArduinoJson | Benoit Blanchon (v6 or v7) |
+
+**For ESP8266 (`esp8266_io_slave.ino`):**
+
+| Library | Author |
+|---------|--------|
+| SoftwareSerial | Arduino (built-in) |
 
 ---
 
-## Wi-Fi, API & device setup
+## Flashing order
 
-1. Start the backend (`cd backend && uvicorn main:app --host 0.0.0.0 --port 8000`).
-2. Register on the dashboard, go to **Devices** page → register device → copy **Device ID** and **Device Secret**.
-3. On the Devices page add up to 3 users and map fingerprint slots 1, 2, 3 to each user account.
-4. Edit the six constants at the top of `multidisplay.ino`:
+1. **Flash ESP8266 first** (`esp8266_io_slave.ino`).
+   - Board: LOLIN(WEMOS) D1 Mini
+   - Self-test on boot: yellow → blue → red LEDs cycle
+2. **Then flash ESP32-S3** (`multidisplay.ino`).
+   - Board: XIAO_ESP32S3
+   - Serial Monitor (115200 baud) should show `IO expander UART ready`
+
+---
+
+## Wi-Fi and device setup
+
+1. Start the backend: `cd backend && uvicorn main:app --host 0.0.0.0 --port 80`
+2. Register on the web dashboard → go to **Devices** → register a device → copy **Device ID** and **Device Secret**.
+3. Add up to 3 users and map fingerprint slots 1–3 to each account.
+4. Edit the constants at the top of `multidisplay.ino`:
 
 ```cpp
-const char* WIFI_SSID     = "YourSSID";
+const char* WIFI_SSID     = "YourSSID";        // 2.4 GHz only
 const char* WIFI_PASSWORD = "YourPassword";
-const char* SERVER_URL    = "http://YOUR_SERVER_IP:8000";
-const int   DEVICE_ID     = 1;
-const char* DEVICE_SECRET = "paste_device_secret_here";
-const char* DEVICE_TOKEN  = "paste_64char_token_here"; // Dashboard → ESP32 Device Key
+const char* SERVER_URL    = "http://YOUR_SERVER_IP";
 ```
 
-5. Flash. Boot sequence:
-   - All 4 displays show "Connecting..."
-   - Display 0 switches to **profile selection** (other 3 show "Smart Mirror")
-   - Scroll and select a profile → place finger → data loads for that user
+And fill in the per-profile tokens and fingerprint slots:
+
+```cpp
+const char* PROFILE_TOKEN[3] = { "token1", "token2", "token3" };
+const uint8_t FP_SLOT[3]     = { 1, 2, 3 };
+```
 
 ---
 
 ## Fingerprint enrollment
 
-1. Select the profile → press **BTN_SEL**.
-2. Place finger on sensor — if not enrolled, "Press SEL to enroll" appears.
-3. Press **BTN_SEL** → "Place finger" → lift → "Place again" → stored in sensor slot.
-4. Go to **Dashboard → Devices → Fingerprint Mappings**, link that slot number to the user's account.
-5. Come back and scan again to log in.
+1. Select a profile with BTN_NEXT / BTN_DONE → confirm with BTN_SEL.
+2. Place finger → if not enrolled, "Press SEL to enroll" appears.
+3. BTN_SEL → "Place finger" → lift → "Place again" → stored in slot.
+4. Dashboard → Devices → Fingerprint Mappings → link slot → user.
+5. Scan again to log in.
 
 ---
 
 ## Button reference
 
 ### Profile selection
-
 | Button | Action |
 |--------|--------|
-| BTN_NEXT (D0) | Scroll **up** |
-| BTN_DONE (D1) | Scroll **down** |
-| BTN_SEL  (D2) | **Confirm** → fingerprint scan |
+| BTN_NEXT (D0) | Scroll up |
+| BTN_DONE (D1) | Scroll down |
+| BTN_SEL  (D2) | Confirm → fingerprint scan |
 
-### Fingerprint scan / enroll
-
+### Dashboard — ESP32-S3 buttons
 | Button | Action |
 |--------|--------|
-| BTN_NEXT (D0) | Cancel → back to profile list |
-| BTN_SEL  (D2) | Confirm enrollment (when offered) |
+| BTN_SEL short press | Cycle active display (inverted = active) |
+| BTN_SEL hold 3 s | Return to profile selection |
+| BTN_NEXT / BTN_DONE | Depend on active display (see below) |
 
-### Dashboard (normal mode)
+| Active display | BTN_NEXT | BTN_DONE |
+|----------------|----------|----------|
+| Greeting (0) | Prev quote | Next quote |
+| Weather (1) | Toggle °C/°F | Toggle °C/°F |
+| News (2) | Prev headline | Next headline |
+| Schedule (3) | Next task | Toggle done |
 
-| Active display | BTN_NEXT (D0) | BTN_DONE (D1) |
-|----------------|---------------|---------------|
-| Greeting (CH 0) | Previous quote | Next quote |
-| Weather  (CH 1) | Toggle °C / °F | Toggle °C / °F |
-| News     (CH 2) | Previous headline | Next headline |
-| Schedule (CH 3) | Next task | Toggle task done / undone |
-
-**BTN_SEL short press** → cycle active display (inverted header = active).
-**BTN_SEL hold 3 s** → return to profile selection (switch user).
+### Dashboard — ESP8266 buttons
+| Button | Action |
+|--------|--------|
+| BTN_DISP0 (D5) | Jump to display 0 — Greeting (inverted) |
+| BTN_DISP1 (D6) | Jump to display 1 — Weather (inverted) |
+| BTN_DISP2 (D7) | Jump to display 2 — News (inverted) |
+| BTN_DISP3 (RX) | Jump to display 3 — Schedule (inverted) |
 
 ---
 
-## Timing / configuration constants
+## Timing constants
 
-| Constant | Value | Description |
-|----------|-------|-------------|
-| `DATA_REFRESH_MS` | 60 000 ms (1 min) | API re-fetch interval |
-| `SLEEP_MS` | 60 000 ms (1 min) | No-presence time before displays sleep |
-| `PRESENCE_CM` | 200 cm | Max distance to count as "someone present" |
-| `MOTION_CHECK_MS` | 500 ms | Ultrasonic sample rate |
-| `FP_SCAN_TIMEOUT` | 20 000 ms (20 s) | Auto-cancel fingerprint scan after this |
-| `LONG_PRESS_MS` | 3 000 ms (3 s) | BTN_SEL hold duration to switch profile |
-| `WATER_SHOW_MS` | 6 000 ms (6 s) | How long water reminder stays on screen |
-| `NEWS_ROTATE_MS` | 5 000 ms (5 s) | Auto news rotation interval |
+| Constant | Default | Description |
+|----------|---------|-------------|
+| `DATA_REFRESH_MS` | 60 000 ms | API re-fetch interval |
+| `PRESENCE_CM` | 1 cm | HC-SR04 distance constant (sleep disabled) |
+| `MOTION_CHECK_MS` | 5000 ms | Ultrasonic sample rate |
+| `FP_SCAN_TIMEOUT` | 20 000 ms | Auto-cancel fingerprint scan |
+| `LONG_PRESS_MS` | 3 000 ms | BTN_SEL hold to switch profile |
+| `NEWS_ROTATE_MS` | 5 000 ms | Auto news rotation interval |
 
 ---
 
@@ -326,11 +368,15 @@ const char* DEVICE_TOKEN  = "paste_64char_token_here"; // Dashboard → ESP32 De
 
 | Symptom | Fix |
 |---------|-----|
-| `API error -1` at boot | `SERVER_URL` is still the placeholder — set your real server IP |
-| `API error 401` | `DEVICE_TOKEN` or `DEVICE_SECRET` is wrong — re-copy from dashboard |
-| Displays stay blank | Check VCC = 3.3 V; open Serial Monitor (115 200 baud) for `ch0 OK` messages |
-| Fingerprint sensor not found | Check TX/RX are crossed; sensor needs 3.3 V, not 5 V |
-| ECHO always 0 / sleep never triggers | TRIG/ECHO swapped, or missing voltage divider on ECHO for 5 V sensor |
-| LEDs never light up | Data not fetched yet (`dataReady = false`); check long leg (anode) faces resistor |
-| Wrong I2C — OLEDs blank | Confirm `SDA_PIN=5 (D4)`, `SCL_PIN=6 (D5)` for XIAO ESP32-S3 |
-| TCA9548A not found | A0/A1/A2 must all be tied to GND for address 0x70 |
+| `IO expander UART ready` but no LEDs / buttons | Check D3→D1 and D8→D2 UART wires; check common GND between boards |
+| Buzzer on continuously at boot | Normal briefly — ESP8266 GPIO16 has pull-down; clears once `setup()` runs |
+| Buzzer never beeps | Module is active-LOW — wired correctly; check VCC and GND on buzzer module |
+| LEDs all on at boot | Crash loop — usually old I2C slave sketch still on ESP8266; reflash `esp8266_io_slave.ino` |
+| Fingerprint sensor not found | Check TX/RX crossed: sensor TX→D9(GPIO8), sensor RX→D6(GPIO43) |
+| `FP sensor OK` but goes to dashboard without scanning | `fpReady=true` but `FP_SLOT` not enrolled; enroll first |
+| `API error -1` | Wrong `SERVER_URL`; server not running; or firewall blocking port 80 |
+| `API error 401` | Wrong device token — re-copy from Dashboard |
+| OLEDs blank | VCC=3.3V; SDA=D4(GPIO5), SCL=D5(GPIO6); TCA9548A A0/A1/A2 all to GND |
+| Display sleep never triggers | `PRESENCE_CM` threshold too small; check HC-SR04 TRIG=D10, ECHO=D7 |
+| No Wi-Fi | 2.4 GHz only; check SSID/password |
+| Upload fails | Hold BOOT, tap RESET, release BOOT before clicking Upload |
